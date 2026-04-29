@@ -178,8 +178,8 @@ function ReportsScreen() {
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5 mt-1">
-                  {r.status !== 'draft' && <StatusBadge status={r.status as ExpenseStatus} />}
-                  {r.status !== 'draft' && <span className="text-xs text-text-2">·</span>}
+                  <StatusBadge status={r.status as ExpenseStatus} />
+                  <span className="text-xs text-text-2">·</span>
                   <span className="text-xs text-text-2">
                     {r.submittedAt ? formatDate(r.submittedAt) : formatDate(r.createdAt)}
                   </span>
@@ -237,7 +237,7 @@ function ReportsScreen() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {r.status !== 'draft' && <StatusBadge status={r.status as ExpenseStatus} />}
+                        <StatusBadge status={r.status as ExpenseStatus} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
@@ -274,7 +274,7 @@ function ReportsScreen() {
                               {r.status === 'draft' && (
                                 <button
                                   onClick={() => setPendingDeleteId(r.id)}
-                                  className="p-1.5 rounded-lg text-text-2/60 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                                  className="p-1.5 rounded-lg text-danger/50 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
                                   title="Delete"
                                 >
                                   <Trash2 size={13} />

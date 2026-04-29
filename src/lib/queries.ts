@@ -38,6 +38,7 @@ function mapExpense(row: RawExpense): Expense {
     date: row.date as string | null,
     notes: row.notes as string | null,
     reportId: row.report_id as string | null,
+    reportTitle: (row.reports as { id: string; title: string } | null)?.title ?? null,
     submittedBy: row.user_id as string,
     submitterName: (row.users as { name: string } | null)?.name ?? null,
     scanId: row.scan_id as string | null,
@@ -69,6 +70,7 @@ const EXPENSE_SELECT = `
   exchange_rate, exchange_rate_date, exchange_rate_source,
   receipt_number, payment_method, is_edited,
   scans!scan_id ( file_path ),
+  reports!report_id ( id, title ),
   expense_items (
     id, name, quantity, unit_price, total_price, category_id,
     lookup_categories!category_id ( name )
@@ -134,12 +136,14 @@ function mapMileage(row: RawMileage): MileageEntry {
     submitterName: (row.users as { name: string } | null)?.name ?? null,
     createdAt: row.created_at as string,
     reportId: row.report_id as string | null ?? null,
+    reportTitle: (row.reports as { id: string; title: string } | null)?.title ?? null,
   }
 }
 
 const WORKSPACE_MILEAGE_SELECT = `
   id, user_id, scan_id, from_location, to_location, distance, unit,
   duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at,
+  reports!report_id ( id, title ),
   users!user_id ( name )
 `
 
@@ -163,7 +167,8 @@ function getDateRange(period?: WorkspacePeriod): { from: string | null; to: stri
 
 const MILEAGE_SELECT = `
   id, user_id, scan_id, from_location, to_location, distance, unit,
-  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at
+  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at,
+  reports!report_id ( id, title )
 `
 
 export async function fetchMileage(filters?: PersonalFilters): Promise<MileageEntry[]> {
@@ -235,6 +240,7 @@ const APPROVAL_SELECT = `
   report_id, scan_id, reporting_currency, reporting_amount, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
   scans!scan_id ( file_path ),
+  reports!report_id ( id, title ),
   expense_items (
     id, name, quantity, unit_price, total_price, category_id,
     lookup_categories!category_id ( name )

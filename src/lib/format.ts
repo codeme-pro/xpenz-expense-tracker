@@ -44,7 +44,7 @@ export const STATUS_LABEL: Record<ExpenseStatus, string> = {
 }
 
 export const STATUS_CLASS: Record<ExpenseStatus, string> = {
-  draft: 'bg-gray-100 text-gray-500',
+  draft: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300',
   submitted: 'bg-blue-50 text-blue-600',
   approved: 'bg-emerald-50 text-emerald-700',
   rejected: 'bg-red-50 text-red-600',

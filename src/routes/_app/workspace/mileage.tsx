@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Car } from 'lucide-react'
 import { fetchWorkspaceMileage, fetchWorkspaceMembers } from '#/lib/queries'
@@ -102,6 +102,9 @@ function WorkspaceMileageScreen() {
                   <span className="text-xs text-text-2">·</span>
                   <span className="text-xs text-text-2">{formatDate(entry.createdAt)}</span>
                 </div>
+                {entry.reportTitle && (
+                  <p className="mt-1 text-xs text-primary truncate">{entry.reportTitle}</p>
+                )}
               </div>
             ))}
           </div>
@@ -117,6 +120,7 @@ function WorkspaceMileageScreen() {
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Date</th>
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Distance</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Report</th>
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Amount</th>
                   </tr>
                 </thead>
@@ -145,6 +149,19 @@ function WorkspaceMileageScreen() {
                         <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={entry.status} /></td>
+                      <td className="px-4 py-3">
+                        {entry.reportId ? (
+                          <Link
+                            to="/reports/$reportId"
+                            params={{ reportId: entry.reportId }}
+                            className="text-xs text-primary hover:underline truncate max-w-[120px] block cursor-pointer"
+                          >
+                            {entry.reportTitle ?? entry.reportId}
+                          </Link>
+                        ) : (
+                          <span className="text-xs text-text-2">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-sm font-semibold text-text-1 tabular-nums">
                           {formatCurrency(entry.amount)}

@@ -117,14 +117,17 @@ function MileageScreen() {
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5 mt-1">
-                  {entry.status !== 'draft' && <StatusBadge status={entry.status} />}
-                  {entry.status !== 'draft' && <span className="text-xs text-text-2">·</span>}
+                  <StatusBadge status={entry.status} />
+                  <span className="text-xs text-text-2">·</span>
                   <span className="text-xs text-text-2">{formatDate(entry.createdAt)}</span>
                   <span className="flex-1" />
                   <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
                   <span className="text-xs text-text-2 mx-1">·</span>
                   <span className="text-sm font-semibold text-text-1 tabular-nums">{formatCurrency(entry.amount)}</span>
                 </div>
+                {entry.reportTitle && (
+                  <p className="mt-1 text-xs text-primary truncate">{entry.reportTitle}</p>
+                )}
               </div>
             ))}
           </div>
@@ -139,6 +142,7 @@ function MileageScreen() {
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Date</th>
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Distance</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Report</th>
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Amount</th>
                   </tr>
                 </thead>
@@ -167,7 +171,16 @@ function MileageScreen() {
                         <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
                       </td>
                       <td className="px-4 py-3">
-                        {entry.status !== 'draft' && <StatusBadge status={entry.status} />}
+                        <StatusBadge status={entry.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        {entry.reportId ? (
+                          <span className="text-xs text-primary truncate max-w-[120px] block">
+                            {entry.reportTitle ?? entry.reportId}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-text-2">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
@@ -196,7 +209,7 @@ function MileageScreen() {
                               >
                                 <button
                                   onClick={() => setPendingDeleteId(entry.id)}
-                                  className="p-1.5 rounded-lg text-text-2/60 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                                  className="p-1.5 rounded-lg text-danger/50 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
                                   title="Delete"
                                 >
                                   <Trash2 size={13} />

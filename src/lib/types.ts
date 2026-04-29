@@ -45,6 +45,7 @@ export interface Expense {
   date: string | null
   notes: string | null
   reportId: string | null
+  reportTitle: string | null
   submittedBy: string     // = user_id
   submitterName: string | null
   scanId: string | null
@@ -103,6 +104,7 @@ export interface MileageEntry {
   submitterName?: string | null
   createdAt: string
   reportId: string | null
+  reportTitle: string | null
 }
 
 export type WorkspacePeriod = 'all_time' | 'this_month' | 'last_month' | 'last_3_months'

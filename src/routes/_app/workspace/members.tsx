@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Users, UserPlus, Upload, X, Copy, Check } from 'lucide-react'
+import { Users, UserPlus, Upload, X, Copy, Check, Mail, Link } from 'lucide-react'
 import { useAuth } from '#/context/AuthContext'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { Avatar } from '#/components/Avatar'
@@ -76,15 +76,26 @@ function WorkspaceMembersScreen() {
           <div className="flex justify-end gap-1.5 mb-3">
             <button
               onClick={() => setShowModal(true)}
-              aria-label="Invite member"
+              aria-label="Generate invite link"
               className="flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-primary border border-primary/30 rounded-lg hover:bg-primary/5 transition-colors duration-150 cursor-pointer"
             >
-              <UserPlus size={14} />
-              Invite
+              <Link size={14} />
+              Generate invite link
             </button>
             <button
-              aria-label="Batch import via CSV"
-              className="flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-text-2 border border-border rounded-lg hover:bg-nav-hover-bg transition-colors duration-150 cursor-pointer"
+              disabled
+              aria-label="Invite via email (coming soon)"
+              title="Coming soon"
+              className="flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-text-2 border border-border rounded-lg opacity-50 cursor-not-allowed"
+            >
+              <Mail size={14} />
+              Invite via email
+            </button>
+            <button
+              disabled
+              aria-label="Batch import via CSV (coming soon)"
+              title="Coming soon"
+              className="flex items-center gap-1.5 h-8 px-3 text-xs font-semibold text-text-2 border border-border rounded-lg opacity-50 cursor-not-allowed"
             >
               <Upload size={14} />
               CSV
@@ -146,8 +157,8 @@ function WorkspaceMembersScreen() {
           >
             <div className="flex items-center justify-between mb-4">
               <h2 id="invite-modal-title" className="text-sm font-semibold text-text-1 flex items-center gap-2">
-                <Users size={16} className="text-primary" />
-                Invite member
+                <Link size={16} className="text-primary" />
+                Generate invite link
               </h2>
               <button
                 onClick={closeModal}

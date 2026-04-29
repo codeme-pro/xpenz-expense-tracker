@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Receipt, ShieldCheck, ShieldAlert, Shield } from 'lucide-react'
 import { fetchWorkspaceExpenses, fetchWorkspaceMembers } from '#/lib/queries'
@@ -138,6 +138,9 @@ function WorkspaceExpensesScreen() {
                       <AuthBadge verdict={expense.authenticityVerdict} />
                     )}
                   </div>
+                  {expense.reportTitle && (
+                    <p className="mt-1 text-xs text-primary truncate">{expense.reportTitle}</p>
+                  )}
                 </button>
               )
             })}
@@ -153,6 +156,7 @@ function WorkspaceExpensesScreen() {
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Member</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Date</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Report</th>
                     {showAuth && <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Authenticity</th>}
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Amount</th>
                   </tr>
@@ -176,6 +180,19 @@ function WorkspaceExpensesScreen() {
                         <span className="text-xs text-text-2">{formatDate(expense.date ?? expense.createdAt)}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={expense.status} /></td>
+                      <td className="px-4 py-3" onClick={(e) => expense.reportId && e.stopPropagation()}>
+                        {expense.reportId ? (
+                          <Link
+                            to="/reports/$reportId"
+                            params={{ reportId: expense.reportId }}
+                            className="text-xs text-primary hover:underline truncate max-w-[120px] block cursor-pointer"
+                          >
+                            {expense.reportTitle ?? expense.reportId}
+                          </Link>
+                        ) : (
+                          <span className="text-xs text-text-2">—</span>
+                        )}
+                      </td>
                       {showAuth && (
                         <td className="px-4 py-3">
                           {expense.authenticityVerdict

@@ -115,8 +115,8 @@ function ExpensesScreen() {
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5 mt-1">
-                  {expense.status !== 'draft' && <StatusBadge status={expense.status} />}
-                  {expense.status !== 'draft' && <span className="text-xs text-text-2">·</span>}
+                  <StatusBadge status={expense.status} />
+                  <span className="text-xs text-text-2">·</span>
                   <span className="text-xs text-text-2">{formatDate(expense.date ?? expense.createdAt)}</span>
                   {expense.category && (
                     <>
@@ -131,6 +131,14 @@ function ExpensesScreen() {
                       : formatCurrency(expense.amount, expense.currency)}
                   </span>
                 </div>
+                {expense.reportTitle && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate({ to: '/reports/$reportId', params: { reportId: expense.reportId! } }) }}
+                    className="mt-1 text-xs text-primary hover:underline truncate block text-left cursor-pointer"
+                  >
+                    {expense.reportTitle}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -144,6 +152,7 @@ function ExpensesScreen() {
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Expense</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Date</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-text-2">Report</th>
                     <th className="text-right px-4 py-2.5 text-xs font-semibold text-text-2">Amount</th>
                   </tr>
                 </thead>
@@ -164,7 +173,19 @@ function ExpensesScreen() {
                         <span className="text-xs text-text-2">{formatDate(expense.date ?? expense.createdAt)}</span>
                       </td>
                       <td className="px-4 py-3">
-                        {expense.status !== 'draft' && <StatusBadge status={expense.status} />}
+                        <StatusBadge status={expense.status} />
+                      </td>
+                      <td className="px-4 py-3" onClick={(e) => expense.reportId && e.stopPropagation()}>
+                        {expense.reportId ? (
+                          <button
+                            onClick={() => navigate({ to: '/reports/$reportId', params: { reportId: expense.reportId! } })}
+                            className="text-xs text-primary hover:underline truncate max-w-[120px] block text-left cursor-pointer"
+                          >
+                            {expense.reportTitle ?? expense.reportId}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-text-2">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
@@ -193,7 +214,7 @@ function ExpensesScreen() {
                               >
                                 <button
                                   onClick={() => setPendingDeleteId(expense.id)}
-                                  className="p-1.5 rounded-lg text-text-2/60 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                                  className="p-1.5 rounded-lg text-danger/50 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
                                   title="Delete"
                                 >
                                   <Trash2 size={13} />
