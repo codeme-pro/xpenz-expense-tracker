@@ -1,0 +1,561 @@
+import { db, supabaseAuth } from './supabase'
+import type { Expense, ExpenseItem, ExpenseStatus, InboxItem, MileageEntry, PersonalFilters, Report, UserRole, WorkspaceMember, WorkspaceFilters, WorkspacePeriod } from './types'
+
+type RawItem = {
+  id: string
+  name: string
+  quantity: number
+  unit_price: number | null
+  total_price: number | null
+  category_id: string | null
+  lookup_categories: { name: string } | null
+}
+
+type RawExpense = Record<string, unknown> & { expense_items: RawItem[] }
+
+function mapExpense(row: RawExpense): Expense {
+  const items: ExpenseItem[] = row.expense_items.map((item) => ({
+    id: item.id,
+    name: item.name,
+    quantity: item.quantity,
+    unitPrice: item.unit_price,
+    totalPrice: item.total_price,
+    categoryId: item.category_id,
+    categoryName: item.lookup_categories?.name ?? null,
+  }))
+  const merchant = (row.merchant as string | null) ?? '—'
+  return {
+    id: row.id as string,
+    title: merchant,
+    merchant,
+    amount: (row.amount as number | null) ?? 0,
+    currency: (row.currency as string | null) ?? 'MYR',
+    reportingCurrency: row.reporting_currency as string | null,
+    reportingAmount: row.reporting_amount as number | null,
+    currencySource: row.currency_source as string | null,
+    category: items[0]?.categoryName ?? null,
+    status: row.status as ExpenseStatus,
+    date: row.date as string | null,
+    notes: row.notes as string | null,
+    reportId: row.report_id as string | null,
+    submittedBy: row.user_id as string,
+    submitterName: (row.users as { name: string } | null)?.name ?? null,
+    scanId: row.scan_id as string | null,
+    scanFilePath: (row.scans as { file_path: string } | null)?.file_path ?? null,
+    authenticityVerdict: row.authenticity_verdict as string | null,
+    authenticityScore: row.authenticity_score as number | null,
+    flags: row.flags as string[] | null,
+    items,
+    createdAt: row.created_at as string,
+    subtotal: row.subtotal as number | null ?? null,
+    tax: row.tax as number | null ?? null,
+    discount: row.discount as number | null ?? null,
+    rounding: row.rounding as number | null ?? null,
+    computedGrandTotal: row.computed_grand_total as number | null ?? null,
+    exchangeRate: row.exchange_rate as number | null ?? null,
+    exchangeRateDate: row.exchange_rate_date as string | null ?? null,
+    exchangeRateSource: row.exchange_rate_source as string | null ?? null,
+    receiptNumber: row.receipt_number as string | null ?? null,
+    paymentMethod: row.payment_method as string | null ?? null,
+    isEdited: (row.is_edited as boolean | null) ?? false,
+  }
+}
+
+const EXPENSE_SELECT = `
+  id, user_id, merchant, amount, currency, date, status, notes,
+  report_id, scan_id, reporting_currency, reporting_amount, currency_source,
+  authenticity_verdict, authenticity_score, flags, created_at,
+  subtotal, tax, discount, rounding, computed_grand_total,
+  exchange_rate, exchange_rate_date, exchange_rate_source,
+  receipt_number, payment_method, is_edited,
+  scans!scan_id ( file_path ),
+  expense_items (
+    id, name, quantity, unit_price, total_price, category_id,
+    lookup_categories!category_id ( name )
+  )
+`
+
+export async function fetchScanSignedUrl(filePath: string): Promise<string | null> {
+  const { data, error } = await db.storage.from('scans').createSignedUrl(filePath, 3600)
+  if (error) return null
+  return data.signedUrl
+}
+
+export async function fetchExpenses(filters?: PersonalFilters): Promise<Expense[]> {
+  let query = db.from('expenses').select(EXPENSE_SELECT).order('created_at', { ascending: false })
+  if (filters?.status) query = query.eq('status', filters.status)
+  if (filters?.search) query = query.ilike('merchant', `%${filters.search}%`)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return ((data ?? []) as unknown as RawExpense[]).map(mapExpense)
+}
+
+export async function fetchExpense(id: string): Promise<Expense | null> {
+  const { data, error } = await db
+    .from('expenses')
+    .select(EXPENSE_SELECT)
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  if (!data) return null
+  return mapExpense(data as unknown as RawExpense)
+}
+
+export async function submitExpense(id: string): Promise<void> {
+  const { error } = await db
+    .from('expenses')
+    .update({ status: 'submitted' })
+    .eq('id', id)
+    .eq('status', 'draft')
+  if (error) throw error
+}
+
+type RawMileage = Record<string, unknown>
+
+function mapMileage(row: RawMileage): MileageEntry {
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    scanId: row.scan_id as string | null,
+    fromLocation: row.from_location as string | null,
+    toLocation: row.to_location as string | null,
+    distance: row.distance as number,
+    unit: row.unit as string,
+    duration: row.duration as string | null,
+    source: row.source as string,
+    purpose: row.purpose as string | null,
+    ratePerKm: row.rate_per_km as number,
+    amount: row.amount as number,
+    estimatedAmount: row.estimated_amount as number | null,
+    status: row.status as ExpenseStatus,
+    submitterName: (row.users as { name: string } | null)?.name ?? null,
+    createdAt: row.created_at as string,
+    reportId: row.report_id as string | null ?? null,
+  }
+}
+
+const WORKSPACE_MILEAGE_SELECT = `
+  id, user_id, scan_id, from_location, to_location, distance, unit,
+  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at,
+  users!user_id ( name )
+`
+
+function getDateRange(period?: WorkspacePeriod): { from: string | null; to: string | null } {
+  if (!period || period === 'all_time') return { from: null, to: null }
+  const now = new Date()
+  if (period === 'this_month') {
+    return { from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), to: null }
+  }
+  if (period === 'last_month') {
+    return {
+      from: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString(),
+      to: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+    }
+  }
+  if (period === 'last_3_months') {
+    return { from: new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString(), to: null }
+  }
+  return { from: null, to: null }
+}
+
+const MILEAGE_SELECT = `
+  id, user_id, scan_id, from_location, to_location, distance, unit,
+  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at
+`
+
+export async function fetchMileage(filters?: PersonalFilters): Promise<MileageEntry[]> {
+  let query = db.from('mileage').select(MILEAGE_SELECT).order('created_at', { ascending: false })
+  if (filters?.status) query = query.eq('status', filters.status)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map(mapMileage)
+}
+
+export async function submitMileage(id: string): Promise<void> {
+  const { error } = await db
+    .from('mileage')
+    .update({ status: 'submitted' })
+    .eq('id', id)
+    .eq('status', 'draft')
+  if (error) throw error
+}
+
+type RawReport = {
+  id: string
+  submitted_by: string
+  title: string
+  status: string
+  total_amount: number
+  currency: string
+  created_at: string
+  submitted_at: string | null
+  rejection_note?: string | null
+  expenses?: { id: string }[]
+  mileage?: { id: string }[]
+}
+
+function mapReport(row: RawReport, expenseCount?: number, mileageCount?: number): Report {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status as ExpenseStatus,
+    submittedBy: row.submitted_by,
+    createdAt: row.created_at,
+    submittedAt: row.submitted_at,
+    totalAmount: row.total_amount,
+    currency: row.currency,
+    expenseCount: expenseCount ?? row.expenses?.length ?? 0,
+    mileageCount: mileageCount ?? row.mileage?.length ?? 0,
+    rejectionNote: row.rejection_note ?? null,
+  }
+}
+
+export async function fetchReports(filters?: PersonalFilters): Promise<Report[]> {
+  let query = db
+    .from('reports')
+    .select('id, submitted_by, title, status, total_amount, currency, created_at, submitted_at, rejection_note, expenses(id), mileage(id)')
+    .order('created_at', { ascending: false })
+  if (filters?.status) query = query.eq('status', filters.status)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return ((data ?? []) as unknown as RawReport[]).map(r => mapReport(r))
+}
+
+const APPROVAL_SELECT = `
+  id, user_id, merchant, amount, currency, date, status, notes,
+  report_id, scan_id, reporting_currency, reporting_amount, currency_source,
+  authenticity_verdict, authenticity_score, flags, created_at,
+  scans!scan_id ( file_path ),
+  expense_items (
+    id, name, quantity, unit_price, total_price, category_id,
+    lookup_categories!category_id ( name )
+  ),
+  users!user_id ( name )
+`
+
+export async function fetchSubmittedExpenses(): Promise<Expense[]> {
+  const { data, error } = await db
+    .from('expenses')
+    .select(APPROVAL_SELECT)
+    .eq('status', 'submitted')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return ((data ?? []) as unknown as RawExpense[]).map(mapExpense)
+}
+
+export async function fetchWorkspaceExpenses(filters?: WorkspaceFilters): Promise<Expense[]> {
+  let query = db.from('expenses').select(APPROVAL_SELECT).order('created_at', { ascending: false })
+  if (filters?.memberId) query = query.eq('user_id', filters.memberId)
+  if (filters?.status) query = query.eq('status', filters.status)
+  if (filters?.search) query = query.ilike('merchant', `%${filters.search}%`)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return ((data ?? []) as unknown as RawExpense[]).map(mapExpense)
+}
+
+export async function fetchWorkspaceMileage(filters?: WorkspaceFilters): Promise<MileageEntry[]> {
+  let query = db.from('mileage').select(WORKSPACE_MILEAGE_SELECT).order('created_at', { ascending: false })
+  if (filters?.memberId) query = query.eq('user_id', filters.memberId)
+  if (filters?.status) query = query.eq('status', filters.status)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map(mapMileage)
+}
+
+export async function approveExpense(id: string): Promise<void> {
+  const { error } = await db
+    .from('expenses')
+    .update({ status: 'approved' })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function rejectExpense(id: string): Promise<void> {
+  const { error } = await db
+    .from('expenses')
+    .update({ status: 'draft' })
+    .eq('id', id)
+  if (error) throw error
+}
+
+type RawInboxItem = {
+  id: string
+  type: string
+  title: string
+  body: string
+  related_id: string | null
+  read: boolean
+  created_at: string
+}
+
+function mapInboxItem(row: RawInboxItem): InboxItem {
+  return {
+    id: row.id,
+    type: row.type as InboxItem['type'],
+    title: row.title,
+    body: row.body,
+    timestamp: row.created_at,
+    read: row.read,
+    relatedId: row.related_id ?? '',
+  }
+}
+
+export async function fetchInbox(): Promise<InboxItem[]> {
+  const { data, error } = await db
+    .from('inbox')
+    .select('id, type, title, body, related_id, read, created_at')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return ((data ?? []) as unknown as RawInboxItem[]).map(mapInboxItem)
+}
+
+export async function markInboxRead(id: string): Promise<void> {
+  const { error } = await db.from('inbox').update({ read: true }).eq('id', id)
+  if (error) throw error
+}
+
+type RawMember = {
+  id: string
+  user_id: string
+  role: string
+  users: { name: string; department: string | null }
+}
+
+export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
+  const [membersRes, expensesRes] = await Promise.all([
+    db
+      .from('workspace_members')
+      .select('id, user_id, role, users!user_id(name, department)')
+      .order('created_at', { ascending: true }),
+    db
+      .from('expenses')
+      .select('user_id, amount, reporting_amount, status')
+      .neq('status', 'rejected'),
+  ])
+  if (membersRes.error) throw membersRes.error
+  if (expensesRes.error) throw expensesRes.error
+  const expenses = expensesRes.data ?? []
+  return ((membersRes.data ?? []) as unknown as RawMember[]).map((m) => {
+    const userExpenses = expenses.filter((e) => e.user_id === m.user_id)
+    return {
+      id: m.id,
+      userId: m.user_id,
+      name: m.users.name,
+      department: m.users.department,
+      role: m.role as UserRole,
+      totalExpenses: userExpenses.reduce(
+        (sum, e) => sum + (((e.reporting_amount ?? e.amount) as number) ?? 0),
+        0,
+      ),
+      pendingExpenses: userExpenses.filter((e) => e.status === 'submitted').length,
+    }
+  })
+}
+
+export async function createInvite(
+  workspaceId: string,
+  invitedBy: string,
+  email: string,
+  role: 'member' | 'admin',
+): Promise<string> {
+  const code = Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8)
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const { error } = await db.from('invites').insert({
+    workspace_id: workspaceId,
+    code,
+    role,
+    email,
+    invited_by: invitedBy,
+    expires_at: expiresAt,
+  })
+  if (error) throw error
+  return code
+}
+
+export async function updateExpense(
+  id: string,
+  updates: {
+    merchant?: string
+    date?: string | null
+    notes?: string | null
+    amount?: number
+    currency?: string
+    receiptNumber?: string | null
+    paymentMethod?: string | null
+  },
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = { is_edited: true }
+  if (updates.merchant !== undefined) dbUpdates.merchant = updates.merchant
+  if ('date' in updates) dbUpdates.date = updates.date ?? null
+  if ('notes' in updates) dbUpdates.notes = updates.notes ?? null
+  if (updates.amount !== undefined) dbUpdates.amount = updates.amount
+  if (updates.currency !== undefined) dbUpdates.currency = updates.currency
+  if ('receiptNumber' in updates) dbUpdates.receipt_number = updates.receiptNumber ?? null
+  if ('paymentMethod' in updates) dbUpdates.payment_method = updates.paymentMethod ?? null
+  const { error } = await db.from('expenses').update(dbUpdates).eq('id', id)
+  if (error) throw error
+}
+
+export async function updateMileageRate(workspaceId: string, rate: number): Promise<void> {
+  const { error } = await db
+    .from('workspaces')
+    .update({ mileage_rate_per_km: rate })
+    .eq('id', workspaceId)
+  if (error) throw error
+}
+
+export async function updateWorkspacePlan(workspaceId: string, plan: 'free' | 'premium'): Promise<void> {
+  const { error } = await db
+    .from('workspaces')
+    .update({ plan })
+    .eq('id', workspaceId)
+  if (error) throw error
+}
+
+export async function updateUserProfile(
+  userId: string,
+  updates: { name?: string; department?: string | null; reportingCurrency?: string },
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = {}
+  if (updates.name !== undefined) dbUpdates.name = updates.name
+  if ('department' in updates) dbUpdates.department = updates.department
+  if (updates.reportingCurrency !== undefined) dbUpdates.reporting_currency = updates.reportingCurrency
+  const { error } = await db.from('users').update(dbUpdates).eq('id', userId)
+  if (error) throw error
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  const { error } = await supabaseAuth.auth.resetPasswordForEmail(email)
+  if (error) throw error
+}
+
+export async function fetchReport(id: string): Promise<{ report: Report; expenses: Expense[]; mileage: MileageEntry[] } | null> {
+  const [reportRes, expensesRes, mileageRes] = await Promise.all([
+    db
+      .from('reports')
+      .select('id, submitted_by, title, status, total_amount, currency, created_at, submitted_at, rejection_note')
+      .eq('id', id)
+      .maybeSingle(),
+    db
+      .from('expenses')
+      .select(EXPENSE_SELECT)
+      .eq('report_id', id)
+      .order('created_at', { ascending: false }),
+    db
+      .from('mileage')
+      .select(MILEAGE_SELECT)
+      .eq('report_id', id)
+      .order('created_at', { ascending: false }),
+  ])
+  if (reportRes.error) throw reportRes.error
+  if (expensesRes.error) throw expensesRes.error
+  if (mileageRes.error) throw mileageRes.error
+  if (!reportRes.data) return null
+  const expenses = ((expensesRes.data ?? []) as unknown as RawExpense[]).map(mapExpense)
+  const mileage = (mileageRes.data ?? []).map(mapMileage)
+  return { report: mapReport(reportRes.data as RawReport, expenses.length, mileage.length), expenses, mileage }
+}
+
+export async function createReport(title: string, workspaceId: string): Promise<Report> {
+  const { data: { user } } = await supabaseAuth.auth.getUser()
+  if (!user) throw new Error('Not authenticated')
+  const { data, error } = await db
+    .from('reports')
+    .insert({ title, workspace_id: workspaceId, submitted_by: user.id, status: 'draft', total_amount: 0, currency: 'MYR' })
+    .select('id, submitted_by, title, status, total_amount, currency, created_at, submitted_at, rejection_note')
+    .single()
+  if (error) throw error
+  return mapReport(data as RawReport, 0, 0)
+}
+
+export async function submitReport(reportId: string): Promise<void> {
+  const { error: rErr } = await db.from('reports').update({ status: 'submitted', submitted_at: new Date().toISOString() }).eq('id', reportId)
+  if (rErr) throw rErr
+  const { error: eErr } = await db.from('expenses').update({ status: 'submitted' }).eq('report_id', reportId).eq('status', 'draft')
+  if (eErr) throw eErr
+  const { error: mErr } = await db.from('mileage').update({ status: 'submitted' }).eq('report_id', reportId).eq('status', 'draft')
+  if (mErr) throw mErr
+}
+
+export async function approveReport(reportId: string): Promise<void> {
+  const { error: rErr } = await db.from('reports').update({ status: 'approved' }).eq('id', reportId)
+  if (rErr) throw rErr
+  const { error: eErr } = await db.from('expenses').update({ status: 'approved' }).eq('report_id', reportId)
+  if (eErr) throw eErr
+  const { error: mErr } = await db.from('mileage').update({ status: 'approved' }).eq('report_id', reportId)
+  if (mErr) throw mErr
+}
+
+export async function rejectReport(reportId: string, note: string): Promise<void> {
+  const { error: rErr } = await db.from('reports').update({ status: 'draft', rejection_note: note }).eq('id', reportId)
+  if (rErr) throw rErr
+  const { error: eErr } = await db.from('expenses').update({ status: 'draft' }).eq('report_id', reportId)
+  if (eErr) throw eErr
+  const { error: mErr } = await db.from('mileage').update({ status: 'draft' }).eq('report_id', reportId)
+  if (mErr) throw mErr
+}
+
+export async function addExpenseToReport(reportId: string, expenseId: string): Promise<void> {
+  const { error } = await db.from('expenses').update({ report_id: reportId }).eq('id', expenseId)
+  if (error) throw error
+}
+
+export async function removeExpenseFromReport(expenseId: string): Promise<void> {
+  const { error } = await db.from('expenses').update({ report_id: null }).eq('id', expenseId)
+  if (error) throw error
+}
+
+export async function addMileageToReport(reportId: string, mileageId: string): Promise<void> {
+  const { error } = await db.from('mileage').update({ report_id: reportId }).eq('id', mileageId)
+  if (error) throw error
+}
+
+export async function removeMileageFromReport(mileageId: string): Promise<void> {
+  const { error } = await db.from('mileage').update({ report_id: null }).eq('id', mileageId)
+  if (error) throw error
+}
+
+export async function fetchWorkspaceReports(filters?: WorkspaceFilters): Promise<Report[]> {
+  let query = db
+    .from('reports')
+    .select('id, submitted_by, title, status, total_amount, currency, created_at, submitted_at, rejection_note, expenses(id), mileage(id)')
+    .order('created_at', { ascending: false })
+  if (filters?.memberId) query = query.eq('submitted_by', filters.memberId)
+  if (filters?.status) query = query.eq('status', filters.status)
+  const { from, to } = getDateRange(filters?.period)
+  if (from) query = query.gte('created_at', from)
+  if (to) query = query.lt('created_at', to)
+  const { data, error } = await query
+  if (error) throw error
+  return ((data ?? []) as unknown as RawReport[]).map(r => mapReport(r))
+}
+
+export async function deleteExpense(id: string): Promise<void> {
+  const { error } = await db.from('expenses').delete().eq('id', id).eq('status', 'draft')
+  if (error) throw error
+}
+
+export async function deleteMileage(id: string): Promise<void> {
+  const { error } = await db.from('mileage').delete().eq('id', id).eq('status', 'draft')
+  if (error) throw error
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  const { error } = await db.from('reports').delete().eq('id', id).eq('status', 'draft')
+  if (error) throw error
+}
