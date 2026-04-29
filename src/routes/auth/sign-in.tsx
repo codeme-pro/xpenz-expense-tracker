@@ -75,14 +75,9 @@ function SignIn() {
         </div>
 
         <div>
-          <div className="flex items-center justify-between mb-1">
-            <label htmlFor="password" className="text-xs font-medium text-text-1">
-              Password <span className="text-danger">*</span>
-            </label>
-            <Link to="/auth/forgot-password" className="text-xs text-primary hover:underline">
-              Forgot password?
-            </Link>
-          </div>
+          <label htmlFor="password" className="block text-xs font-medium text-text-1 mb-1">
+            Password <span className="text-danger">*</span>
+          </label>
           <div className="relative">
             <input
               id="password"
@@ -108,6 +103,11 @@ function SignIn() {
               {errors.password}
             </p>
           )}
+          <div className="mt-1.5 text-right">
+            <Link to="/auth/forgot-password" className="text-xs text-text-2 hover:text-primary hover:underline transition-colors duration-150">
+              Forgot password?
+            </Link>
+          </div>
         </div>
 
         <button
