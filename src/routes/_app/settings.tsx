@@ -1,13 +1,14 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { LogOut, Sun, Moon, Lock, Pencil, Check, X, Loader2, ChevronRight } from 'lucide-react'
+import { LogOut, Sun, Moon, Lock, Pencil, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '#/context/AuthContext'
 import { useTheme } from '#/context/ThemeContext'
 import { TopBar } from '#/components/TopBar'
 import { Avatar } from '#/components/Avatar'
 import { getInitials } from '#/lib/format'
-import { updateUserProfile, sendPasswordReset } from '#/lib/queries'
+import { updateUserProfile } from '#/lib/queries'
+import { supabaseAuth } from '#/lib/supabase'
 
 export const Route = createFileRoute('/_app/settings')({
   component: PreferencesScreen,
@@ -24,7 +25,12 @@ function PreferencesScreen() {
   const [editingProfile, setEditingProfile] = useState(false)
   const [editName, setEditName] = useState('')
   const [editDept, setEditDept] = useState('')
-  const [pwSent, setPwSent] = useState(false)
+
+  const [editingPassword, setEditingPassword] = useState(false)
+  const [pwFields, setPwFields] = useState({ old: '', newPw: '', confirm: '' })
+  const [pwErrors, setPwErrors] = useState<Partial<Record<'old' | 'newPw' | 'confirm', string>>>({})
+  const [showPw, setShowPw] = useState(false)
+  const [pwDone, setPwDone] = useState(false)
 
   const profileMutation = useMutation({
     mutationFn: ({ name, department }: { name: string; department: string }) =>
@@ -42,12 +48,46 @@ function PreferencesScreen() {
   })
 
   const passwordMutation = useMutation({
-    mutationFn: () => sendPasswordReset(user!.email),
+    mutationFn: async () => {
+      const { error: authError } = await supabaseAuth.auth.signInWithPassword({
+        email: user!.email,
+        password: pwFields.old,
+      })
+      if (authError) throw new Error('wrong_old_password')
+      const { error: updateError } = await supabaseAuth.auth.updateUser({ password: pwFields.newPw })
+      if (updateError) throw updateError
+    },
     onSuccess: () => {
-      setPwSent(true)
-      setTimeout(() => setPwSent(false), 5000)
+      setPwDone(true)
+      setTimeout(() => {
+        setEditingPassword(false)
+        setPwDone(false)
+        setPwFields({ old: '', newPw: '', confirm: '' })
+        passwordMutation.reset()
+      }, 1500)
     },
   })
+
+  const setPwField = (key: keyof typeof pwFields) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPwFields((f) => ({ ...f, [key]: e.target.value }))
+    if (pwErrors[key]) setPwErrors((err) => ({ ...err, [key]: undefined }))
+  }
+
+  const submitPassword = () => {
+    const errs: typeof pwErrors = {}
+    if (!pwFields.old) errs.old = 'Required'
+    if (pwFields.newPw.length < 8) errs.newPw = 'At least 8 characters'
+    if (pwFields.newPw !== pwFields.confirm) errs.confirm = 'Passwords do not match'
+    if (Object.keys(errs).length) { setPwErrors(errs); return }
+    passwordMutation.mutate()
+  }
+
+  const cancelPassword = () => {
+    setEditingPassword(false)
+    setPwFields({ old: '', newPw: '', confirm: '' })
+    setPwErrors({})
+    passwordMutation.reset()
+  }
 
   const handleSignOut = async () => {
     await signOut()
@@ -166,25 +206,81 @@ function PreferencesScreen() {
               <span className="text-sm text-text-1">{user.email}</span>
               <span className="text-xs text-text-2">Email</span>
             </div>
-            <button
-              onClick={() => passwordMutation.mutate()}
-              disabled={passwordMutation.isPending || pwSent}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-nav-hover-bg transition-colors duration-150 cursor-pointer disabled:opacity-60"
-            >
-              <div className="flex items-center gap-2">
-                <Lock size={15} className="text-text-2 shrink-0" />
-                <span className="text-sm text-text-1">Change password</span>
+            {!editingPassword ? (
+              <button
+                onClick={() => setEditingPassword(true)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-nav-hover-bg transition-colors duration-150 cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Lock size={15} className="text-text-2 shrink-0" />
+                  <span className="text-sm text-text-1">Change password</span>
+                </div>
+                <Lock size={14} className="text-text-2 opacity-40" />
+              </button>
+            ) : (
+              <div className="px-4 py-3 space-y-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-text-2">Change password</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowPw((v) => !v)}
+                      aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                      className="p-1.5 rounded-lg text-text-2 hover:bg-background transition-colors duration-150 cursor-pointer"
+                    >
+                      {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                    <button
+                      onClick={cancelPassword}
+                      aria-label="Cancel"
+                      className="p-1.5 rounded-lg text-text-2 hover:bg-background transition-colors duration-150 cursor-pointer"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {(['old', 'newPw', 'confirm'] as const).map((key) => (
+                  <div key={key}>
+                    <label className="block text-xs text-text-2 mb-1">
+                      {key === 'old' ? 'Current password' : key === 'newPw' ? 'New password' : 'Confirm new password'}
+                    </label>
+                    <input
+                      type={showPw ? 'text' : 'password'}
+                      autoComplete={key === 'old' ? 'current-password' : 'new-password'}
+                      value={pwFields[key]}
+                      onChange={setPwField(key)}
+                      placeholder={key === 'newPw' ? 'Min. 8 characters' : ''}
+                      className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                    />
+                    {pwErrors[key] && (
+                      <p className="mt-1 text-xs text-danger">{pwErrors[key]}</p>
+                    )}
+                  </div>
+                ))}
+
+                {passwordMutation.isError && (
+                  <p className="text-xs text-danger">
+                    {(passwordMutation.error as Error)?.message === 'wrong_old_password'
+                      ? 'Current password is incorrect.'
+                      : 'Failed to update. Try again.'}
+                  </p>
+                )}
+
+                <button
+                  onClick={submitPassword}
+                  disabled={passwordMutation.isPending || pwDone}
+                  className="w-full h-9 flex items-center justify-center gap-2 bg-primary text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-opacity duration-150 cursor-pointer"
+                >
+                  {passwordMutation.isPending ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : pwDone ? (
+                    <><Check size={14} /> Updated</>
+                  ) : (
+                    'Update password'
+                  )}
+                </button>
               </div>
-              {passwordMutation.isPending ? (
-                <Loader2 size={14} className="text-text-2 animate-spin" />
-              ) : pwSent ? (
-                <span className="text-xs text-success font-medium">Email sent</span>
-              ) : (
-                <ChevronRight size={14} className="text-text-2" />
-              )}
-            </button>
-            {passwordMutation.isError && (
-              <p className="px-4 py-2 text-xs text-danger">Failed to send. Try again.</p>
             )}
           </div>
         </div>

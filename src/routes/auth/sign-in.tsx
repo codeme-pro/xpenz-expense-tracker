@@ -75,9 +75,14 @@ function SignIn() {
         </div>
 
         <div>
-          <label htmlFor="password" className="block text-xs font-medium text-text-1 mb-1">
-            Password <span className="text-danger">*</span>
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="password" className="text-xs font-medium text-text-1">
+              Password <span className="text-danger">*</span>
+            </label>
+            <Link to="/auth/forgot-password" className="text-xs text-primary hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           <div className="relative">
             <input
               id="password"
