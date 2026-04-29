@@ -41,6 +41,7 @@ interface ParsedExpense {
   totals: {
     subtotal: number | null;
     tax: number | null;
+    tax_breakdown: { label: string; amount: number }[] | null;
     discount: number | null;
     rounding: number | null;
     grand_total: number;
@@ -151,10 +152,22 @@ async function ocrAndParse(
                 },
                 totals: {
                   type: "object",
-                  required: ["subtotal", "tax", "discount", "rounding", "grand_total", "computed_grand_total"],
+                  required: ["subtotal", "tax", "tax_breakdown", "discount", "rounding", "grand_total", "computed_grand_total"],
                   properties: {
                     subtotal: { type: ["number", "null"] },
                     tax: { type: ["number", "null"] },
+                    tax_breakdown: {
+                      type: ["array", "null"],
+                      description: "Individual tax lines when multiple tax types appear on receipt. null if only one tax type or no tax.",
+                      items: {
+                        type: "object",
+                        required: ["label", "amount"],
+                        properties: {
+                          label: { type: "string", description: "Tax type label as printed (e.g. 'SST 6%', 'Service Tax 10%')" },
+                          amount: { type: "number" },
+                        },
+                      },
+                    },
                     discount: { type: ["number", "null"] },
                     rounding: {
                       type: ["number", "null"],
@@ -305,6 +318,17 @@ Determine currency using this priority order. Always output both "currency" and 
     → set rounding = null
 
 - Do NOT guess missing numbers
+
+- For tax_breakdown:
+  - If the receipt shows multiple distinct tax lines (e.g. SST 6%, Service Tax 10%):
+    → extract each as { "label": "<label as printed>", "amount": <number> }
+    → list all in tax_breakdown array
+    → set tax = sum of all tax_breakdown amounts (rounded to 2 decimal places)
+  - If only one tax type or tax is a single undifferentiated line:
+    → set tax_breakdown = null
+    → set tax = the single tax value
+  - If no tax:
+    → set tax = null, tax_breakdown = null
 
 ---
 
@@ -568,7 +592,10 @@ Deno.serve(async (req: Request) => {
           amount: exp.totals.grand_total,
           computed_grand_total: exp.totals.computed_grand_total,
           subtotal: exp.totals.subtotal,
-          tax: exp.totals.tax,
+          tax: exp.totals.tax_breakdown?.length
+            ? Math.round(exp.totals.tax_breakdown.reduce((s, t) => s + t.amount, 0) * 100) / 100
+            : exp.totals.tax,
+          tax_breakdown: exp.totals.tax_breakdown?.length ? exp.totals.tax_breakdown : null,
           discount: exp.totals.discount,
           rounding: exp.totals.rounding,
           currency: exp.currency,

@@ -50,6 +50,7 @@ function mapExpense(row: RawExpense): Expense {
     createdAt: row.created_at as string,
     subtotal: row.subtotal as number | null ?? null,
     tax: row.tax as number | null ?? null,
+    taxBreakdown: (row.tax_breakdown as { label: string; amount: number }[] | null) ?? null,
     discount: row.discount as number | null ?? null,
     rounding: row.rounding as number | null ?? null,
     computedGrandTotal: row.computed_grand_total as number | null ?? null,
@@ -66,7 +67,7 @@ const EXPENSE_SELECT = `
   id, user_id, merchant, amount, currency, date, status, notes,
   report_id, scan_id, reporting_currency, reporting_amount, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
-  subtotal, tax, discount, rounding, computed_grand_total,
+  subtotal, tax, tax_breakdown, discount, rounding, computed_grand_total,
   exchange_rate, exchange_rate_date, exchange_rate_source,
   receipt_number, payment_method, is_edited,
   scans!scan_id ( file_path ),
@@ -403,6 +404,7 @@ export async function updateExpense(
     currency?: string
     receiptNumber?: string | null
     paymentMethod?: string | null
+    taxBreakdown?: { label: string; amount: number }[] | null
   },
 ): Promise<void> {
   const dbUpdates: Record<string, unknown> = { is_edited: true }
@@ -413,6 +415,13 @@ export async function updateExpense(
   if (updates.currency !== undefined) dbUpdates.currency = updates.currency
   if ('receiptNumber' in updates) dbUpdates.receipt_number = updates.receiptNumber ?? null
   if ('paymentMethod' in updates) dbUpdates.payment_method = updates.paymentMethod ?? null
+  if ('taxBreakdown' in updates) {
+    const lines = updates.taxBreakdown?.length ? updates.taxBreakdown : null
+    dbUpdates.tax_breakdown = lines
+    if (lines) {
+      dbUpdates.tax = Math.round(lines.reduce((s, t) => s + t.amount, 0) * 100) / 100
+    }
+  }
   const { error } = await db.from('expenses').update(dbUpdates).eq('id', id)
   if (error) throw error
 }

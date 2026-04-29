@@ -58,6 +58,7 @@ export interface Expense {
   // Totals breakdown
   subtotal: number | null
   tax: number | null
+  taxBreakdown: { label: string; amount: number }[] | null
   discount: number | null
   rounding: number | null
   computedGrandTotal: number | null

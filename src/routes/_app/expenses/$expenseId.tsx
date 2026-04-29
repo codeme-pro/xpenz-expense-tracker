@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { X, ImageOff, ChevronDown, Pencil, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2 } from 'lucide-react'
+import { X, ImageOff, ChevronDown, Pencil, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus } from 'lucide-react'
 import { fetchExpense, fetchScanSignedUrl, updateExpense } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { formatCurrency, formatDate } from '#/lib/format'
@@ -108,42 +108,165 @@ function EditRow({
 
 const inputCls = 'text-xs text-text-1 bg-background border border-border rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary w-full'
 
-function TotalBreakdown({ expense }: { expense: Expense }) {
+type TaxLine = { label: string; amount: number }
+
+function TotalBreakdown({
+  expense,
+  isEditMode = false,
+  editTaxLines = [],
+  onTaxLinesChange,
+}: {
+  expense: Expense
+  isEditMode?: boolean
+  editTaxLines?: TaxLine[]
+  onTaxLinesChange?: (lines: TaxLine[]) => void
+}) {
   const hasMismatch = expense.flags?.includes('total_mismatch') ?? false
   const showConversion =
     expense.reportingAmount != null &&
     expense.reportingCurrency != null &&
     expense.reportingCurrency !== expense.currency
 
+  // In edit mode use editTaxLines; in view mode use expense.taxBreakdown
+  const viewBreakdown = expense.taxBreakdown ?? []
+  const breakdown = isEditMode ? editTaxLines : viewBreakdown
+  const hasMultiple = breakdown.length >= 2
+  const hasSingle = breakdown.length === 1
+
+  // Sum mismatch: breakdown sum ≠ stored tax total
+  const breakdownSum = breakdown.reduce((s, t) => s + t.amount, 0)
+  const taxSumMismatch = hasMultiple && expense.tax != null && Math.abs(breakdownSum - expense.tax) > 0.01
+  const [taxExpanded, setTaxExpanded] = useState(taxSumMismatch)
+
   const nullVal = <span className="text-xs tabular-nums text-text-2/40">—</span>
+
+  const taxRow = isEditMode && onTaxLinesChange ? (
+    // ── Edit mode: editable tax lines ────────────────────────────────────────
+    <div>
+      <div className="flex justify-between gap-4 px-4 py-2.5">
+        <span className="text-xs text-text-2">Tax</span>
+        {editTaxLines.length > 0
+          ? <span className="text-xs text-text-1 tabular-nums">{formatCurrency(breakdownSum, expense.currency)}</span>
+          : nullVal}
+      </div>
+      {editTaxLines.length > 0 && (
+        <div className="mx-4 mb-1 pl-3 border-l-2 border-border/60">
+          {editTaxLines.map((line, i) => (
+            <div key={i} className="flex items-center gap-2 py-1">
+              <input
+                type="text"
+                value={line.label}
+                onChange={(e) => {
+                  const next = [...editTaxLines]
+                  next[i] = { ...next[i], label: e.target.value }
+                  onTaxLinesChange(next)
+                }}
+                placeholder="Tax label"
+                className="flex-1 min-w-0 text-xs text-text-1 bg-background border border-border rounded-md px-2 py-1 focus:outline-none focus:border-primary"
+              />
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={line.amount || ''}
+                onChange={(e) => {
+                  const next = [...editTaxLines]
+                  next[i] = { ...next[i], amount: parseFloat(e.target.value) || 0 }
+                  onTaxLinesChange(next)
+                }}
+                className="w-20 text-xs text-right text-text-1 bg-background border border-border rounded-md px-2 py-1 focus:outline-none focus:border-primary tabular-nums"
+              />
+              <button
+                onClick={() => onTaxLinesChange(editTaxLines.filter((_, j) => j !== i))}
+                className="text-danger/50 hover:text-danger transition-colors duration-150 shrink-0"
+                aria-label="Remove tax line"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="px-4 pb-2">
+        <button
+          onClick={() => onTaxLinesChange([...editTaxLines, { label: '', amount: 0 }])}
+          className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors duration-150"
+        >
+          <Plus size={11} /> Add tax line
+        </button>
+      </div>
+    </div>
+  ) : hasMultiple ? (
+    // ── View mode: collapsible multi-tax ────────────────────────────────────
+    <div>
+      <button
+        onClick={() => setTaxExpanded((v) => !v)}
+        className="w-full flex justify-between gap-4 px-4 py-2.5 cursor-pointer"
+      >
+        <span className="flex items-center gap-1.5 text-xs text-text-2">
+          Tax
+          <ChevronDown size={11} className={`transition-transform duration-200 ${taxExpanded ? 'rotate-180' : ''}`} />
+          {taxSumMismatch && <AlertTriangle size={11} className="text-amber-500" title="Tax lines don't sum to total" />}
+        </span>
+        <span className="text-xs text-text-1 tabular-nums">
+          {expense.tax != null ? formatCurrency(expense.tax, expense.currency) : nullVal}
+        </span>
+      </button>
+      {taxExpanded && (
+        <div className="mx-4 mb-1 pl-3 border-l-2 border-border/60">
+          {breakdown.map((line, i) => (
+            <div
+              key={i}
+              className="flex justify-between gap-4 py-1.5 animate-fade-in-up"
+              style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
+            >
+              <span className="text-xs text-text-2 truncate max-w-[160px]">{line.label}</span>
+              <span className="text-xs text-text-2 tabular-nums shrink-0">{formatCurrency(line.amount, expense.currency)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : (
+    // ── View mode: single tax or no breakdown ────────────────────────────────
+    <div className="flex justify-between gap-4 px-4 py-2.5">
+      <span className="text-xs text-text-2">{hasSingle ? breakdown[0].label : 'Tax'}</span>
+      {expense.tax != null
+        ? <span className="text-xs text-text-1 tabular-nums">{formatCurrency(expense.tax, expense.currency)}</span>
+        : nullVal}
+    </div>
+  )
 
   return (
     <div>
-      {/* Receipt breakdown — always show all rows */}
+      {/* Subtotal */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Subtotal</span>
         {expense.subtotal != null
           ? <span className="text-xs text-text-1 tabular-nums">{formatCurrency(expense.subtotal, expense.currency)}</span>
           : nullVal}
       </div>
-      <div className="flex justify-between gap-4 px-4 py-2.5">
-        <span className="text-xs text-text-2">Tax</span>
-        {expense.tax != null
-          ? <span className="text-xs text-text-1 tabular-nums">{formatCurrency(expense.tax, expense.currency)}</span>
-          : nullVal}
-      </div>
+
+      {/* Tax (with breakdown) */}
+      {taxRow}
+
+      {/* Discount */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Discount</span>
         {expense.discount != null
           ? <span className="text-xs text-text-1 tabular-nums">{expense.discount !== 0 ? '- ' : ''}{formatCurrency(expense.discount, expense.currency)}</span>
           : nullVal}
       </div>
+
+      {/* Rounding */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Rounding</span>
         {expense.rounding != null
           ? <span className="text-xs text-text-1 tabular-nums">{expense.rounding > 0 ? '+ ' : expense.rounding < 0 ? '- ' : ''}{formatCurrency(Math.abs(expense.rounding), expense.currency)}</span>
           : nullVal}
       </div>
+
+      {/* Computed total (dim) */}
       {expense.computedGrandTotal != null && (
         <div className="flex justify-between gap-4 px-4 py-2.5">
           <span className="text-xs text-text-2/60 italic">Computed total</span>
@@ -152,6 +275,7 @@ function TotalBreakdown({ expense }: { expense: Expense }) {
           </span>
         </div>
       )}
+
       {/* Grand Total */}
       <div className="flex justify-between gap-4 px-4 py-3 border-t border-border bg-background/40">
         <div className="flex items-center gap-1.5">
@@ -220,6 +344,7 @@ function ExpenseDetail() {
   const [editValues, setEditValues] = useState<EditValues>({
     merchant: '', date: '', notes: '', amount: '', currency: '', receiptNumber: '', paymentMethod: '',
   })
+  const [editTaxLines, setEditTaxLines] = useState<TaxLine[]>([])
 
   const { data: expense, isLoading } = useQuery({
     queryKey: queryKeys.expense(expenseId),
@@ -253,6 +378,7 @@ function ExpenseDetail() {
       receiptNumber: exp.receiptNumber ?? '',
       paymentMethod: exp.paymentMethod ?? '',
     })
+    setEditTaxLines(exp.taxBreakdown ? [...exp.taxBreakdown] : [])
     setDetailsOpen(true)
     setIsEditMode(true)
   }
@@ -274,6 +400,12 @@ function ExpenseDetail() {
     if (currency !== exp.currency) updates.currency = currency
     if (receiptNumber !== exp.receiptNumber) updates.receiptNumber = receiptNumber
     if (paymentMethod !== exp.paymentMethod) updates.paymentMethod = paymentMethod
+
+    const origTax = exp.taxBreakdown ?? []
+    const taxChanged =
+      editTaxLines.length !== origTax.length ||
+      editTaxLines.some((l, i) => l.label !== origTax[i]?.label || l.amount !== origTax[i]?.amount)
+    if (taxChanged) updates.taxBreakdown = editTaxLines.length > 0 ? editTaxLines : null
 
     if (Object.keys(updates).length > 0) {
       saveAll.mutate(updates)
@@ -514,7 +646,14 @@ function ExpenseDetail() {
           <div className={`bg-background/40 ${breakdownOpen ? 'border-b border-border' : ''}`}>
             {breakdownHeader}
           </div>
-          {breakdownOpen && <TotalBreakdown expense={expense} />}
+          {breakdownOpen && (
+            <TotalBreakdown
+              expense={expense}
+              isEditMode={isEditMode}
+              editTaxLines={editTaxLines}
+              onTaxLinesChange={setEditTaxLines}
+            />
+          )}
         </div>
 
       </div>
@@ -586,7 +725,14 @@ function ExpenseDetail() {
               <div className={`bg-background/40 ${breakdownOpen ? 'border-b border-border' : ''}`}>
                 {breakdownHeader}
               </div>
-              {breakdownOpen && <TotalBreakdown expense={expense} />}
+              {breakdownOpen && (
+            <TotalBreakdown
+              expense={expense}
+              isEditMode={isEditMode}
+              editTaxLines={editTaxLines}
+              onTaxLinesChange={setEditTaxLines}
+            />
+          )}
             </div>
 
           </div>
