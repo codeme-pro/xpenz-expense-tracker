@@ -556,6 +556,17 @@ export async function deleteExpense(id: string): Promise<void> {
   if (error) throw error
 }
 
+export async function updateMileage(
+  id: string,
+  fields: { fromLocation?: string; toLocation?: string },
+): Promise<void> {
+  const update: Record<string, string> = {}
+  if (fields.fromLocation !== undefined) update.from_location = fields.fromLocation
+  if (fields.toLocation !== undefined) update.to_location = fields.toLocation
+  const { error } = await db.from('mileage').update(update).eq('id', id).eq('status', 'draft')
+  if (error) throw error
+}
+
 export async function deleteMileage(id: string): Promise<void> {
   const { error } = await db.from('mileage').delete().eq('id', id).eq('status', 'draft')
   if (error) throw error

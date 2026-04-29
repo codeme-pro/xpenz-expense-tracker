@@ -79,11 +79,10 @@ function WorkspaceMileageScreen() {
                 style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
               >
                 <div className="flex items-start gap-2">
-                  <p className="flex-1 text-sm font-semibold text-text-1 min-w-0">
-                    {entry.fromLocation ?? '—'}
-                    <span className="text-text-2 font-normal"> → </span>
-                    {entry.toLocation ?? '—'}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-text-2 truncate">↑ {entry.fromLocation ?? '—'}</p>
+                    <p className="text-sm font-semibold text-text-1 truncate mt-0.5">↓ {entry.toLocation ?? '—'}</p>
+                  </div>
                   <div className="shrink-0 text-right">
                     <p className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</p>
                     <p className="text-sm font-semibold text-text-1 tabular-nums">
@@ -132,9 +131,8 @@ function WorkspaceMileageScreen() {
                       style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
                     >
                       <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-text-1 truncate max-w-[180px]">
-                          {entry.fromLocation ?? '—'} → {entry.toLocation ?? '—'}
-                        </p>
+                        <p className="text-xs text-text-2 truncate max-w-[180px]">↑ {entry.fromLocation ?? '—'}</p>
+                        <p className="text-sm font-medium text-text-1 truncate max-w-[180px] mt-0.5">↓ {entry.toLocation ?? '—'}</p>
                         {entry.purpose && (
                           <p className="text-xs text-text-2 mt-0.5 truncate max-w-[180px]">{entry.purpose}</p>
                         )}

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Car, Trash2, MoreVertical, X, Check, Loader2 } from 'lucide-react'
-import { fetchMileage, deleteMileage } from '#/lib/queries'
+import { Car, Trash2, MoreVertical, X, Check, Loader2, Pencil, ArrowUpDown } from 'lucide-react'
+import { fetchMileage, deleteMileage, updateMileage } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
@@ -34,11 +34,15 @@ const REPORTS_TABS = [
   { to: '/mileage', label: 'Mileage' },
 ]
 
+type ActionSheetView = 'actions' | 'confirmDelete' | 'editRoute'
+
 type ActionSheet = {
   id: string
   title: string
   status: ExpenseStatus
-  confirmingDelete: boolean
+  view: ActionSheetView
+  from: string
+  to: string
 }
 
 function MileageScreen() {
@@ -49,6 +53,11 @@ function MileageScreen() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [actionSheet, setActionSheet] = useState<ActionSheet | null>(null)
 
+  // Desktop inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editFrom, setEditFrom] = useState('')
+  const [editTo, setEditTo] = useState('')
+
   const { data: entries = [], isLoading } = useQuery({
     queryKey: queryKeys.mileage(filters),
     queryFn: () => fetchMileage(filters),
@@ -57,6 +66,17 @@ function MileageScreen() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteMileage(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['mileage'] }),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, from, to }: { id: string; from: string; to: string }) =>
+      updateMileage(id, { fromLocation: from, toLocation: to }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mileage'] })
+      setEditingId(null)
+      // update action sheet from/to if open
+      setActionSheet((s) => s ? { ...s, view: 'actions' } : null)
+    },
   })
 
   const handleFilterChange = (updates: Partial<PersonalFilters>) => {
@@ -72,8 +92,41 @@ function MileageScreen() {
 
   const closeActionSheet = () => setActionSheet(null)
 
-  const entryTitle = (entry: { fromLocation?: string | null; toLocation?: string | null }) =>
-    `${entry.fromLocation ?? '—'} → ${entry.toLocation ?? '—'}`
+  const startDesktopEdit = (entry: { id: string; fromLocation: string | null; toLocation: string | null }) => {
+    setEditingId(entry.id)
+    setEditFrom(entry.fromLocation ?? '')
+    setEditTo(entry.toLocation ?? '')
+    setPendingDeleteId(null)
+  }
+
+  const cancelDesktopEdit = () => {
+    setEditingId(null)
+    updateMutation.reset()
+  }
+
+  const saveDesktopEdit = (id: string) => {
+    updateMutation.mutate({ id, from: editFrom, to: editTo })
+  }
+
+  const swapDesktop = () => {
+    const tmp = editFrom
+    setEditFrom(editTo)
+    setEditTo(tmp)
+  }
+
+  const swapSheet = () => {
+    if (!actionSheet) return
+    setActionSheet((s) => s ? { ...s, from: s.to, to: s.from } : null)
+  }
+
+  const saveSheet = () => {
+    if (!actionSheet) return
+    updateMutation.mutate(
+      { id: actionSheet.id, from: actionSheet.from, to: actionSheet.to },
+    )
+  }
+
+  const inputCls = 'w-full h-8 px-2 text-xs bg-background border border-border rounded-lg text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary'
 
   return (
     <div>
@@ -102,15 +155,21 @@ function MileageScreen() {
                 className="bg-surface rounded-xl border border-border shadow-sm px-4 py-3 animate-fade-in-up"
                 style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
               >
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-sm font-semibold text-text-1 min-w-0 truncate">
-                    {entry.fromLocation ?? '—'}
-                    <span className="text-text-2 font-normal"> → </span>
-                    {entry.toLocation ?? '—'}
-                  </p>
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-text-2 truncate">↑ {entry.fromLocation ?? '—'}</p>
+                    <p className="text-sm font-semibold text-text-1 truncate mt-0.5">↓ {entry.toLocation ?? '—'}</p>
+                  </div>
                   <button
-                    onClick={() => setActionSheet({ id: entry.id, title: entryTitle(entry), status: entry.status, confirmingDelete: false })}
-                    className="p-1.5 -mr-1 rounded-lg text-text-2 active:bg-background transition-colors duration-150 cursor-pointer"
+                    onClick={() => setActionSheet({
+                      id: entry.id,
+                      title: `${entry.fromLocation ?? '—'} → ${entry.toLocation ?? '—'}`,
+                      status: entry.status,
+                      view: 'actions',
+                      from: entry.fromLocation ?? '',
+                      to: entry.toLocation ?? '',
+                    })}
+                    className="p-1.5 -mr-1 rounded-lg text-text-2 active:bg-background transition-colors duration-150 cursor-pointer shrink-0"
                     aria-label="More actions"
                   >
                     <MoreVertical size={15} />
@@ -147,83 +206,151 @@ function MileageScreen() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {entries.map((entry, i) => (
-                    <tr
-                      key={entry.id}
-                      onMouseLeave={() => { if (pendingDeleteId === entry.id) setPendingDeleteId(null) }}
-                      className={`group/row transition-colors duration-100 animate-fade-in-up ${pendingDeleteId === entry.id ? 'bg-danger/5' : 'hover:bg-primary/5'}`}
-                      style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
-                    >
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-text-1 truncate max-w-[180px]">
-                          {entry.fromLocation ?? '—'} → {entry.toLocation ?? '—'}
-                        </p>
-                        {entry.purpose && (
-                          <p className="text-xs text-text-2 mt-0.5 truncate max-w-[180px]">
-                            {entry.purpose}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="text-xs text-text-2">{formatDate(entry.createdAt)}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={entry.status} />
-                      </td>
-                      <td className="px-4 py-3">
-                        {entry.reportId ? (
-                          <span className="text-xs text-primary truncate max-w-[120px] block">
-                            {entry.reportTitle ?? entry.reportId}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-text-2">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          {pendingDeleteId === entry.id ? (
-                            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                              <span className="text-xs text-danger font-medium mr-1">Delete?</span>
-                              <button
-                                onClick={() => { deleteMutation.mutate(entry.id); setPendingDeleteId(null) }}
-                                disabled={deleteMutation.isPending}
-                                className="p-1.5 rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors duration-150 cursor-pointer"
-                              >
-                                {deleteMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                              </button>
-                              <button
-                                onClick={() => setPendingDeleteId(null)}
-                                className="p-1.5 rounded-lg text-text-2 hover:bg-background transition-colors duration-150 cursor-pointer"
-                              >
-                                <X size={13} />
-                              </button>
-                            </div>
-                          ) : (
-                            entry.status === 'draft' && (
-                              <div
-                                className="flex items-center opacity-0 group-hover/row:opacity-100 translate-x-1 group-hover/row:translate-x-0 transition-all duration-150 ease-out"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                  {entries.map((entry, i) => {
+                    const isEditing = editingId === entry.id
+                    return (
+                      <tr
+                        key={entry.id}
+                        onMouseLeave={() => {
+                          if (pendingDeleteId === entry.id) setPendingDeleteId(null)
+                        }}
+                        className={`group/row transition-colors duration-100 animate-fade-in-up ${
+                          pendingDeleteId === entry.id ? 'bg-danger/5'
+                          : isEditing ? 'bg-primary/5'
+                          : 'hover:bg-primary/5'
+                        }`}
+                        style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
+                      >
+                        {/* Trip cell — display or edit */}
+                        <td className="px-4 py-3">
+                          {isEditing ? (
+                            <div className="space-y-1.5 w-[200px]" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                value={editFrom}
+                                onChange={(e) => setEditFrom(e.target.value)}
+                                placeholder="From"
+                                autoFocus
+                                className={inputCls}
+                              />
+                              <div className="flex justify-center">
                                 <button
-                                  onClick={() => setPendingDeleteId(entry.id)}
-                                  className="p-1.5 rounded-lg text-danger/50 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
-                                  title="Delete"
+                                  onClick={swapDesktop}
+                                  title="Swap from / to"
+                                  className="p-1 rounded-md text-text-2 hover:text-primary hover:bg-primary/10 transition-colors duration-150 cursor-pointer"
                                 >
-                                  <Trash2 size={13} />
+                                  <ArrowUpDown size={12} />
                                 </button>
                               </div>
-                            )
+                              <input
+                                value={editTo}
+                                onChange={(e) => setEditTo(e.target.value)}
+                                placeholder="To"
+                                className={inputCls}
+                              />
+                              <div className="flex items-center gap-1.5 pt-0.5">
+                                <button
+                                  onClick={() => saveDesktopEdit(entry.id)}
+                                  disabled={updateMutation.isPending}
+                                  className="flex items-center gap-1 h-7 px-2.5 text-xs font-semibold bg-primary text-white rounded-lg disabled:opacity-50 cursor-pointer"
+                                >
+                                  {updateMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                                  Save
+                                </button>
+                                <button
+                                  onClick={cancelDesktopEdit}
+                                  className="flex items-center gap-1 h-7 px-2.5 text-xs text-text-2 border border-border rounded-lg hover:bg-background cursor-pointer"
+                                >
+                                  <X size={11} />
+                                  Cancel
+                                </button>
+                              </div>
+                              {updateMutation.isError && (
+                                <p className="text-xs text-danger">Failed to save.</p>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="group/trip flex items-start gap-2">
+                              <div className="min-w-0">
+                                <p className="text-xs text-text-2 truncate max-w-[180px]">↑ {entry.fromLocation ?? '—'}</p>
+                                <p className="text-sm font-medium text-text-1 truncate max-w-[180px] mt-0.5">↓ {entry.toLocation ?? '—'}</p>
+                                {entry.purpose && (
+                                  <p className="text-xs text-text-2 mt-0.5 truncate max-w-[180px]">{entry.purpose}</p>
+                                )}
+                              </div>
+                              {entry.status === 'draft' && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); startDesktopEdit(entry) }}
+                                  title="Edit route"
+                                  className="mt-0.5 p-1 rounded-md text-text-2/40 hover:text-primary hover:bg-primary/10 opacity-0 group-hover/row:opacity-100 transition-all duration-150 cursor-pointer shrink-0"
+                                >
+                                  <Pencil size={11} />
+                                </button>
+                              )}
+                            </div>
                           )}
-                          <span className={`text-sm font-semibold tabular-nums transition-opacity duration-150 ${pendingDeleteId === entry.id ? 'text-text-2 opacity-40' : 'text-text-1 group-hover/row:opacity-60'}`}>
-                            {formatCurrency(entry.amount)}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-xs text-text-2">{formatDate(entry.createdAt)}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={entry.status} />
+                        </td>
+                        <td className="px-4 py-3">
+                          {entry.reportId ? (
+                            <span className="text-xs text-primary truncate max-w-[120px] block">
+                              {entry.reportTitle ?? entry.reportId}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-text-2">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {!isEditing && (pendingDeleteId === entry.id ? (
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <span className="text-xs text-danger font-medium mr-1">Delete?</span>
+                                <button
+                                  onClick={() => { deleteMutation.mutate(entry.id); setPendingDeleteId(null) }}
+                                  disabled={deleteMutation.isPending}
+                                  className="p-1.5 rounded-lg bg-danger/10 text-danger hover:bg-danger/20 transition-colors duration-150 cursor-pointer"
+                                >
+                                  {deleteMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                                </button>
+                                <button
+                                  onClick={() => setPendingDeleteId(null)}
+                                  className="p-1.5 rounded-lg text-text-2 hover:bg-background transition-colors duration-150 cursor-pointer"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </div>
+                            ) : (
+                              entry.status === 'draft' && (
+                                <div
+                                  className="flex items-center opacity-0 group-hover/row:opacity-100 translate-x-1 group-hover/row:translate-x-0 transition-all duration-150 ease-out"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    onClick={() => setPendingDeleteId(entry.id)}
+                                    className="p-1.5 rounded-lg text-danger/50 hover:text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              )
+                            ))}
+                            <span className={`text-sm font-semibold tabular-nums transition-opacity duration-150 ${pendingDeleteId === entry.id ? 'text-text-2 opacity-40' : 'text-text-1 group-hover/row:opacity-60'}`}>
+                              {formatCurrency(entry.amount)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -239,46 +366,122 @@ function MileageScreen() {
           <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface rounded-t-2xl border-t border-border shadow-xl animate-slide-up">
             <div className="p-4 pb-8">
               <div className="w-10 h-1 bg-border rounded-full mx-auto mb-4" />
-              <p className="text-sm font-semibold text-text-1 mb-1 truncate px-1">{actionSheet.title}</p>
-              {!actionSheet.confirmingDelete ? (
-                <div className="mt-3 flex flex-col gap-1">
-                  {actionSheet.status === 'draft' && (
+
+              {actionSheet.view === 'actions' && (
+                <>
+                  <p className="text-sm font-semibold text-text-1 mb-1 truncate px-1">
+                    {actionSheet.from || '—'} → {actionSheet.to || '—'}
+                  </p>
+                  <div className="mt-3 flex flex-col gap-1">
+                    {actionSheet.status === 'draft' && (
+                      <button
+                        onClick={() => setActionSheet((s) => s ? { ...s, view: 'editRoute' } : null)}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-xl text-sm text-text-1 hover:bg-nav-hover-bg transition-colors duration-150 cursor-pointer"
+                      >
+                        <Pencil size={16} className="shrink-0 text-text-2" />
+                        Edit route
+                      </button>
+                    )}
+                    {actionSheet.status === 'draft' && (
+                      <button
+                        onClick={() => setActionSheet((s) => s ? { ...s, view: 'confirmDelete' } : null)}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-xl text-sm text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                      >
+                        <Trash2 size={16} className="shrink-0" />
+                        Delete entry
+                      </button>
+                    )}
                     <button
-                      onClick={() => setActionSheet((s) => s ? { ...s, confirmingDelete: true } : null)}
-                      className="flex items-center gap-3 w-full px-3 py-3 rounded-xl text-sm text-danger hover:bg-danger/10 transition-colors duration-150 cursor-pointer"
+                      onClick={closeActionSheet}
+                      className="flex items-center gap-3 w-full px-3 py-3 rounded-xl text-sm text-text-2 hover:bg-background transition-colors duration-150 mt-1 cursor-pointer"
                     >
-                      <Trash2 size={16} className="shrink-0" />
-                      Delete entry
-                    </button>
-                  )}
-                  <button
-                    onClick={closeActionSheet}
-                    className="flex items-center gap-3 w-full px-3 py-3 rounded-xl text-sm text-text-2 hover:bg-background transition-colors duration-150 mt-1 cursor-pointer"
-                  >
-                    <X size={16} className="shrink-0" />
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-3">
-                  <p className="text-sm text-text-2 px-1 mb-4">This cannot be undone.</p>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      onClick={() => { deleteMutation.mutate(actionSheet.id); closeActionSheet() }}
-                      disabled={deleteMutation.isPending}
-                      className="flex items-center justify-center gap-2 w-full h-11 rounded-xl text-sm font-semibold text-white bg-danger disabled:opacity-50 transition-opacity duration-150 cursor-pointer"
-                    >
-                      {deleteMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-                      Yes, delete
-                    </button>
-                    <button
-                      onClick={() => setActionSheet((s) => s ? { ...s, confirmingDelete: false } : null)}
-                      className="flex items-center justify-center w-full h-11 rounded-xl text-sm text-text-2 border border-border hover:bg-background transition-colors duration-150 cursor-pointer"
-                    >
-                      Go back
+                      <X size={16} className="shrink-0" />
+                      Cancel
                     </button>
                   </div>
-                </div>
+                </>
+              )}
+
+              {actionSheet.view === 'editRoute' && (
+                <>
+                  <p className="text-xs font-semibold text-text-2 uppercase tracking-wider px-1 mb-3">Edit route</p>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-xs text-text-2 mb-1">From</label>
+                      <input
+                        value={actionSheet.from}
+                        onChange={(e) => setActionSheet((s) => s ? { ...s, from: e.target.value } : null)}
+                        placeholder="Origin"
+                        className="w-full h-10 px-3 text-sm bg-background border border-border rounded-xl text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      />
+                    </div>
+                    <div className="flex justify-center">
+                      <button
+                        onClick={swapSheet}
+                        title="Swap from / to"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-text-2 hover:text-primary hover:bg-primary/10 transition-colors duration-150 cursor-pointer"
+                      >
+                        <ArrowUpDown size={13} />
+                        Swap
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-2 mb-1">To</label>
+                      <input
+                        value={actionSheet.to}
+                        onChange={(e) => setActionSheet((s) => s ? { ...s, to: e.target.value } : null)}
+                        placeholder="Destination"
+                        className="w-full h-10 px-3 text-sm bg-background border border-border rounded-xl text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+                      />
+                    </div>
+                    {updateMutation.isError && (
+                      <p className="text-xs text-danger px-1">Failed to save. Try again.</p>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 mt-4">
+                    <button
+                      onClick={saveSheet}
+                      disabled={updateMutation.isPending}
+                      className="flex items-center justify-center gap-2 w-full h-11 rounded-xl text-sm font-semibold text-white bg-primary disabled:opacity-50 transition-opacity duration-150 cursor-pointer"
+                    >
+                      {updateMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                      Save route
+                    </button>
+                    <button
+                      onClick={() => setActionSheet((s) => s ? { ...s, view: 'actions' } : null)}
+                      className="flex items-center justify-center w-full h-11 rounded-xl text-sm text-text-2 border border-border hover:bg-background transition-colors duration-150 cursor-pointer"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {actionSheet.view === 'confirmDelete' && (
+                <>
+                  <p className="text-sm font-semibold text-text-1 mb-1 truncate px-1">
+                    {actionSheet.from || '—'} → {actionSheet.to || '—'}
+                  </p>
+                  <div className="mt-3">
+                    <p className="text-sm text-text-2 px-1 mb-4">This cannot be undone.</p>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => { deleteMutation.mutate(actionSheet.id); closeActionSheet() }}
+                        disabled={deleteMutation.isPending}
+                        className="flex items-center justify-center gap-2 w-full h-11 rounded-xl text-sm font-semibold text-white bg-danger disabled:opacity-50 transition-opacity duration-150 cursor-pointer"
+                      >
+                        {deleteMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                        Yes, delete
+                      </button>
+                      <button
+                        onClick={() => setActionSheet((s) => s ? { ...s, view: 'actions' } : null)}
+                        className="flex items-center justify-center w-full h-11 rounded-xl text-sm text-text-2 border border-border hover:bg-background transition-colors duration-150 cursor-pointer"
+                      >
+                        Go back
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
