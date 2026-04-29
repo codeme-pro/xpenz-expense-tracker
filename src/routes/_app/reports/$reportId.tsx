@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
 import { AlertTriangle, Plus, Trash2, CheckCircle, XCircle, Loader2, Car, X, Check } from 'lucide-react'
 import {
   fetchReport, submitReport, approveReport, rejectReport,
   addExpenseToReport, removeExpenseFromReport,
   addMileageToReport, removeMileageFromReport,
-  fetchExpenses, fetchMileage,
+  fetchExpenses, fetchMileage, fetchScanSignedUrl,
 } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { formatCurrency, formatDate } from '#/lib/format'
@@ -14,18 +14,20 @@ import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
 import { ExpenseRow } from '#/components/ExpenseRow'
 import { useWorkspace } from '#/context/WorkspaceContext'
+import { WordMark } from '#/assets/WordMark'
 import type { Expense, MileageEntry } from '#/lib/types'
 
 export const Route = createFileRoute('/_app/reports/$reportId')({
   validateSearch: (search: Record<string, unknown>) => ({
     ctx: search.ctx === 'admin' ? ('admin' as const) : undefined,
+    print: !!search.print ? (true as const) : undefined,
   }),
   component: ReportDetail,
 })
 
 function ReportDetail() {
   const { reportId } = Route.useParams()
-  const { ctx } = Route.useSearch()
+  const { ctx, print: isPrint } = Route.useSearch()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { current } = useWorkspace()
@@ -58,6 +60,26 @@ function ReportDetail() {
     enabled: addingMileage,
     select: (entries: MileageEntry[]) => entries.filter((m) => !m.reportId),
   })
+
+  // Fetch signed URLs for all expense images (print mode only)
+  const expensesWithImages = isPrint ? (data?.expenses ?? []).filter((e) => !!e.scanFilePath) : []
+  const imageResults = useQueries({
+    queries: expensesWithImages.map((e) => ({
+      queryKey: queryKeys.scanUrl(e.scanFilePath!),
+      queryFn: () => fetchScanSignedUrl(e.scanFilePath!),
+    })),
+  })
+  const imageMap: Record<string, string | null> = {}
+  expensesWithImages.forEach((e, i) => {
+    imageMap[e.id] = imageResults[i]?.data ?? null
+  })
+  const imagesLoading = imageResults.some((q) => q.isLoading)
+
+  useEffect(() => {
+    if (!isPrint || isLoading || imagesLoading) return
+    const timer = setTimeout(() => window.print(), 600)
+    return () => clearTimeout(timer)
+  }, [isPrint, isLoading, imagesLoading])
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.report(reportId) })
@@ -134,6 +156,161 @@ function ReportDetail() {
   const isDraft = report.status === 'draft'
   const canSubmit = isDraft && (expenses.length > 0 || mileage.length > 0)
   const itemCount = expenses.length + mileage.length
+
+  // ── Print view ─────────────────────────────────────────────────────────────
+  if (isPrint) {
+    return (
+      <div className="min-h-screen bg-white p-8 max-w-4xl mx-auto font-sans text-[#1E1B4B]">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6 pb-4 border-b border-gray-200">
+          <div>
+            <WordMark className="h-6 w-auto text-[#6366F1] mb-1" />
+            <p className="text-xs text-gray-500">{current.name}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-gray-400">Generated {new Date().toLocaleDateString('en-MY', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          </div>
+        </div>
+
+        {/* Report info */}
+        <div className="mb-6">
+          <div className="flex items-start gap-3 mb-2">
+            <h1 className="text-xl font-bold text-[#1E1B4B] flex-1">{report.title}</h1>
+            <StatusBadge status={report.status} />
+          </div>
+          <p className="text-2xl font-bold text-[#6366F1] tabular-nums mb-1">
+            {formatCurrency(report.totalAmount, report.currency)}
+          </p>
+          <p className="text-xs text-gray-500">
+            {itemCount} {itemCount === 1 ? 'item' : 'items'} ·{' '}
+            {report.submittedAt
+              ? `Submitted ${formatDate(report.submittedAt)}`
+              : `Created ${formatDate(report.createdAt)}`}
+          </p>
+          {report.rejectionNote && (
+            <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <p className="text-xs font-semibold text-amber-700">Rejected</p>
+              <p className="text-xs text-amber-600 mt-0.5">{report.rejectionNote}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Expenses */}
+        {expenses.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
+              Expenses ({expenses.length})
+            </h2>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500 w-12">Receipt</th>
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Description</th>
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Date</th>
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Category</th>
+                  <th className="text-right py-2 text-xs font-semibold text-gray-500">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expenses.map((e) => (
+                  <tr key={e.id} className="border-b border-gray-100">
+                    <td className="py-2 pr-3 align-top">
+                      {imageMap[e.id] ? (
+                        <img
+                          src={imageMap[e.id]!}
+                          alt="Receipt"
+                          className="w-10 h-12 object-cover rounded object-top"
+                        />
+                      ) : (
+                        <div className="w-10 h-12 rounded bg-gray-100 flex items-center justify-center">
+                          <span className="text-[8px] text-gray-400">N/A</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 align-top">
+                      <p className="font-medium text-[#1E1B4B]">{e.title}</p>
+                      {e.merchant && <p className="text-xs text-gray-500 mt-0.5">{e.merchant}</p>}
+                      {e.receiptNumber && <p className="text-[10px] text-gray-400 mt-0.5">#{e.receiptNumber}</p>}
+                    </td>
+                    <td className="py-2 pr-3 align-top whitespace-nowrap">
+                      <span className="text-xs text-gray-600">{formatDate(e.date ?? e.createdAt)}</span>
+                    </td>
+                    <td className="py-2 pr-3 align-top">
+                      <span className="text-xs text-gray-600">{e.category ?? '—'}</span>
+                    </td>
+                    <td className="py-2 align-top text-right">
+                      <p className="font-semibold tabular-nums text-[#1E1B4B]">
+                        {formatCurrency(e.reportingAmount ?? e.amount, e.reportingCurrency ?? e.currency)}
+                      </p>
+                      {e.reportingAmount != null && e.currency !== e.reportingCurrency && (
+                        <p className="text-[10px] text-gray-400 tabular-nums">
+                          {formatCurrency(e.amount, e.currency)}
+                        </p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Mileage */}
+        {mileage.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">
+              Mileage ({mileage.length})
+            </h2>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Route</th>
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Date</th>
+                  <th className="text-left py-2 pr-3 text-xs font-semibold text-gray-500">Distance</th>
+                  <th className="text-right py-2 text-xs font-semibold text-gray-500">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mileage.map((m) => (
+                  <tr key={m.id} className="border-b border-gray-100">
+                    <td className="py-2 pr-3">
+                      <p className="font-medium text-[#1E1B4B]">{m.fromLocation ?? '—'} → {m.toLocation ?? '—'}</p>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <span className="text-xs text-gray-600">{formatDate(m.createdAt)}</span>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <span className="text-xs text-gray-600">{m.distance} {m.unit}</span>
+                    </td>
+                    <td className="py-2 text-right">
+                      <span className="font-semibold tabular-nums text-[#1E1B4B]">{formatCurrency(m.amount)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Total summary */}
+        <div className="flex justify-end pt-3 border-t border-gray-200">
+          <div className="text-right">
+            <p className="text-xs text-gray-500 mb-0.5">Total</p>
+            <p className="text-xl font-bold text-[#6366F1] tabular-nums">
+              {formatCurrency(report.totalAmount, report.currency)}
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="mt-8 pt-4 border-t border-gray-100">
+          <p className="text-[10px] text-gray-400 text-center">
+            Generated by Xpenz · {current.name} · {new Date().toLocaleString()}
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   // ── Shared sub-components ──────────────────────────────────────────────────
 

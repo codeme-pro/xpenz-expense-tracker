@@ -90,7 +90,7 @@ function ReportsScreen() {
   }
 
   const handleExport = (reportId: string) => {
-    window.open(`/reports/${reportId}`, '_blank')
+    window.open(`/reports/${reportId}?print=1`, '_blank')
   }
 
   const closeActionSheet = () => setActionSheet(null)
