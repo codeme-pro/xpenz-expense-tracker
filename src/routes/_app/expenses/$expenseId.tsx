@@ -438,7 +438,7 @@ function ExpenseDetail() {
       className="w-full bg-surface rounded-xl border border-border shadow-sm overflow-hidden cursor-pointer hover:opacity-90 transition-opacity duration-150"
       aria-label="View receipt image"
     >
-      <img src={receiptUrl} alt="Receipt" className="w-full max-h-48 object-cover object-top" />
+      <img src={receiptUrl} alt="Receipt" className="w-full max-h-48 object-cover object-top" loading="lazy" decoding="async" />
     </button>
   ) : null
 
@@ -746,7 +746,7 @@ function ExpenseDetail() {
                 aria-label="View receipt image"
               >
                 <div className="aspect-[4/5] overflow-hidden">
-                  <img src={receiptUrl} alt="Receipt" className="w-full h-full object-cover" />
+                  <img src={receiptUrl} alt="Receipt" className="w-full h-full object-cover" loading="lazy" decoding="async" />
                 </div>
               </button>
             ) : (

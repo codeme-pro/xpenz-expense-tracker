@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Receipt, FileText, CheckCircle, TrendingUp, Loader2, X, AlertCircle, Bell } from 'lucide-react'
 import { fetchExpenses, fetchReports, fetchInbox } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
@@ -93,14 +93,17 @@ function HomeScreen() {
     }
   }, [queryClient])
 
-  const currentMonth = new Date().toISOString().slice(0, 7)
-  const totalThisMonth = expenses
-    .filter((e) => (e.date ?? e.createdAt).startsWith(currentMonth))
-    .reduce((sum, e) => sum + e.amount, 0)
-
-  const pendingCount = expenses.filter((e) => e.status === 'submitted').length
-  const approvedCount = expenses.filter((e) => e.status === 'approved').length
-  const draftCount = expenses.filter((e) => e.status === 'draft').length
+  const { totalThisMonth, pendingCount, approvedCount, draftCount } = useMemo(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7)
+    let totalThisMonth = 0, pendingCount = 0, approvedCount = 0, draftCount = 0
+    for (const e of expenses) {
+      if ((e.date ?? e.createdAt).startsWith(currentMonth)) totalThisMonth += e.amount
+      if (e.status === 'submitted') pendingCount++
+      else if (e.status === 'approved') approvedCount++
+      else if (e.status === 'draft') draftCount++
+    }
+    return { totalThisMonth, pendingCount, approvedCount, draftCount }
+  }, [expenses])
 
   return (
     <div>
