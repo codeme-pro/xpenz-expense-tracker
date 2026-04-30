@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import {
   Upload, Loader2, CheckCircle, AlertCircle,
-  X, Zap, ZapOff, RotateCcw, MonitorX,
+  X, Camera, RotateCcw, MonitorX,
 } from 'lucide-react'
 import { TopBar } from '#/components/TopBar'
 import { supabaseAuth } from '#/lib/supabase'
@@ -20,42 +20,14 @@ function getFrameDimensions() {
   return { w, h: w * (4 / 3) }
 }
 
-function captureAndCrop(video: HTMLVideoElement): Promise<Blob | null> {
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return Promise.resolve(null)
-  const vw = video.videoWidth
-  const vh = video.videoHeight
-  if (!vw || !vh) return Promise.resolve(null)
-  const dw = window.innerWidth
-  const dh = window.innerHeight
-  const scale = Math.max(dw / vw, dh / vh)
-  const offX = (dw - vw * scale) / 2
-  const offY = (dh - vh * scale) / 2
-  const { w: fw, h: fh } = getFrameDimensions()
-  const fx = (dw - fw) / 2
-  const fy = (dh - fh) / 2
-  const srcX = (fx - offX) / scale
-  const srcY = (fy - offY) / scale
-  const srcW = fw / scale
-  const srcH = fh / scale
-  canvas.width = Math.round(srcW)
-  canvas.height = Math.round(srcH)
-  ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
-  return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92))
-}
-
 function ScanScreen() {
   const navigate = useNavigate()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024)
   const [status, setStatus] = useState<ScanStatus>('idle')
   const [exiting, setExiting] = useState(false)
   const [previewExiting, setPreviewExiting] = useState(false)
-  const [hasCamera, setHasCamera] = useState(false)
-  const [flashOn, setFlashOn] = useState(false)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -64,38 +36,6 @@ function ScanScreen() {
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
-
-  // Camera init
-  useEffect(() => {
-    const md = navigator.mediaDevices as MediaDevices | undefined
-    if (isDesktop || !md?.getUserMedia) return
-    let active = true
-    md.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-    }).then(stream => {
-      if (!active) { stream.getTracks().forEach(t => t.stop()); return }
-      streamRef.current = stream
-      if (videoRef.current) videoRef.current.srcObject = stream
-      setHasCamera(true)
-    }).catch(() => {
-      if (active) setHasCamera(prev => prev)
-    })
-    return () => {
-      active = false
-      streamRef.current?.getTracks().forEach(t => t.stop())
-      streamRef.current = null
-    }
-  }, [isDesktop])
-
-  useEffect(() => {
-    if (hasCamera && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current
-    }
-  }, [hasCamera])
-
-  useEffect(() => {
-    streamRef.current?.getTracks().forEach(t => { t.enabled = status === 'idle' || status === 'previewing' })
-  }, [status])
 
   const prevPreviewUrl = useRef<string | null>(null)
   useEffect(() => {
@@ -110,19 +50,10 @@ function ScanScreen() {
     navigate({ to: to as '/home' })
   }, [navigate])
 
-  const handleCapture = useCallback(async () => {
-    const video = videoRef.current
-    if (!video) return
-    const blob = await captureAndCrop(video)
-    if (!blob) return
-    setPreview({ url: URL.createObjectURL(blob), blob, source: 'camera' })
-    setStatus('previewing')
-  }, [])
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (source: 'camera' | 'file') => (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setPreview({ url: URL.createObjectURL(file), blob: file, source: 'file' })
+    setPreview({ url: URL.createObjectURL(file), blob: file, source })
     setStatus('previewing')
     e.target.value = ''
   }
@@ -151,7 +82,6 @@ function ScanScreen() {
       )
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
-      // Upload done — AI processing runs in background, home screen shows progress
       setStatus('success')
       setTimeout(() => closeAndNavigate('/home'), 1200)
     } catch (err) {
@@ -159,15 +89,6 @@ function ScanScreen() {
       setStatus('error')
     }
   }, [preview, closeAndNavigate])
-
-  const toggleFlash = async () => {
-    const track = streamRef.current?.getVideoTracks()[0]
-    if (!track) return
-    try {
-      await (track as any).applyConstraints({ advanced: [{ torch: !flashOn }] })
-      setFlashOn(f => !f)
-    } catch { /* torch unsupported */ }
-  }
 
   // ── Desktop: not available ────────────────────────────────────────────────
   if (isDesktop) {
@@ -193,44 +114,63 @@ function ScanScreen() {
     )
   }
 
-  // ── Mobile: full-screen camera UI ─────────────────────────────────────────
+  // ── Mobile ─────────────────────────────────────────────────────────────────
   const { w: fw, h: fh } = getFrameDimensions()
 
   return (
     <div className={`fixed inset-0 z-50 bg-black overflow-hidden ${exiting ? 'animate-scan-exit' : 'animate-scan-enter'}`}>
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+      {/* Hidden inputs */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFileChange('camera')}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange('file')}
+      />
 
-      {/* Video always mounted — prevents camera re-init/blank on retake */}
-      {hasCamera && (
-        <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
-      )}
-
-      {/* ── IDLE viewfinder ── */}
+      {/* ── IDLE ── */}
       {status === 'idle' && (
         <>
-          {/* Crop frame + dark surround */}
+          {/* Static dark background with subtle gradient */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black via-neutral-900 to-black" />
+
+          {/* Crop frame decoration */}
           <div
             className="absolute rounded-xl pointer-events-none"
             style={{
               width: fw, height: fh,
               left: '50%', top: '50%',
               transform: 'translate(-50%, -52%)',
-              boxShadow: '0 0 0 100vmax rgba(0,0,0,0.65)',
-              clipPath: 'inset(-100vmax)',
-              border: '1.5px solid rgba(255,255,255,0.6)',
+              border: '1.5px solid rgba(255,255,255,0.25)',
             }}
           >
+            {/* Corner brackets */}
             {(['tl', 'tr', 'bl', 'br'] as const).map(c => (
               <span key={c} className="absolute w-7 h-7" style={{
                 top: c[0] === 't' ? -2 : 'auto', bottom: c[0] === 'b' ? -2 : 'auto',
                 left: c[1] === 'l' ? -2 : 'auto', right: c[1] === 'r' ? -2 : 'auto',
-                borderTop: c[0] === 't' ? '3px solid #fff' : 'none',
-                borderBottom: c[0] === 'b' ? '3px solid #fff' : 'none',
-                borderLeft: c[1] === 'l' ? '3px solid #fff' : 'none',
-                borderRight: c[1] === 'r' ? '3px solid #fff' : 'none',
+                borderTop: c[0] === 't' ? '3px solid rgba(255,255,255,0.8)' : 'none',
+                borderBottom: c[0] === 'b' ? '3px solid rgba(255,255,255,0.8)' : 'none',
+                borderLeft: c[1] === 'l' ? '3px solid rgba(255,255,255,0.8)' : 'none',
+                borderRight: c[1] === 'r' ? '3px solid rgba(255,255,255,0.8)' : 'none',
                 borderRadius: c === 'tl' ? '8px 0 0 0' : c === 'tr' ? '0 8px 0 0' : c === 'bl' ? '0 0 0 8px' : '0 0 8px 0',
               }} />
             ))}
+
+            {/* Center hint */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="text-white/30 text-xs font-medium text-center px-8">
+                Tap the button below to open camera
+              </p>
+            </div>
           </div>
 
           {/* Top bar */}
@@ -246,58 +186,40 @@ function ScanScreen() {
               <X size={20} />
             </button>
             <span className="text-white text-sm font-medium drop-shadow-md">Scan</span>
-            <button
-              onClick={toggleFlash}
-              aria-label={flashOn ? 'Flash on' : 'Flash off'}
-              disabled={!hasCamera}
-              className="w-10 h-10 flex items-center justify-center rounded-full bg-black/40 text-white touch-manipulation active:scale-90 transition-transform duration-100 disabled:opacity-30"
-            >
-              {flashOn ? <Zap size={18} /> : <ZapOff size={18} />}
-            </button>
+            <div className="w-10 h-10" />
           </div>
 
-          {/* Bottom controls — hint text lives here so it never overlaps the frame */}
+          {/* Bottom controls */}
           <div
             className="absolute bottom-0 inset-x-0 z-10 bg-gradient-to-t from-black/80 to-transparent pt-8"
             style={{ paddingBottom: 'max(2.5rem, env(safe-area-inset-bottom))' }}
           >
             <p className="text-white/55 text-xs font-medium text-center mb-4 px-4 pointer-events-none">
-              {hasCamera ? 'Position receipt or map within frame' : 'Camera unavailable — tap below to upload'}
+              Position receipt within frame
             </p>
-            <div className="flex items-center justify-center">
-              {hasCamera && (
-                <div className="flex items-center justify-between w-full px-10">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Upload from gallery"
-                    className="w-12 h-12 flex items-center justify-center rounded-xl bg-black/40 text-white touch-manipulation active:scale-90 active:bg-white/20 transition-all duration-100"
-                  >
-                    <Upload size={20} />
-                  </button>
+            <div className="flex items-center justify-between w-full px-10">
+              {/* Gallery */}
+              <button
+                onClick={() => galleryInputRef.current?.click()}
+                aria-label="Upload from gallery"
+                className="w-12 h-12 flex items-center justify-center rounded-xl bg-black/40 text-white touch-manipulation active:scale-90 active:bg-white/20 transition-all duration-100"
+              >
+                <Upload size={20} />
+              </button>
 
-                  <button
-                    onClick={handleCapture}
-                    aria-label="Capture photo"
-                    className="flex items-center justify-center rounded-full touch-manipulation shadow-xl active:scale-90 transition-transform duration-100 bg-white"
-                    style={{ width: 72, height: 72 }}
-                  >
-                    <div className="w-14 h-14 rounded-full bg-white border-[2.5px] border-black/15 pointer-events-none" />
-                  </button>
-
-                  <div className="w-12 h-12" />
+              {/* Camera shutter */}
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                aria-label="Open camera"
+                className="flex items-center justify-center rounded-full touch-manipulation shadow-xl active:scale-90 transition-transform duration-100 bg-white"
+                style={{ width: 72, height: 72 }}
+              >
+                <div className="w-14 h-14 rounded-full bg-white border-[2.5px] border-black/15 flex items-center justify-center pointer-events-none">
+                  <Camera size={24} className="text-black/50" />
                 </div>
-              )}
+              </button>
 
-              {!hasCamera && (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="Choose file"
-                  className="flex items-center justify-center rounded-full touch-manipulation shadow-xl active:scale-90 transition-transform duration-100"
-                  style={{ width: 72, height: 72, background: 'rgba(255,255,255,0.18)' }}
-                >
-                  <Upload size={22} className="text-white pointer-events-none" />
-                </button>
-              )}
+              <div className="w-12 h-12" />
             </div>
           </div>
         </>
@@ -306,7 +228,6 @@ function ScanScreen() {
       {/* ── PREVIEW ── */}
       {status === 'previewing' && preview && (
         <div className={`absolute inset-0 flex flex-col bg-black ${previewExiting ? 'animate-status-exit' : 'animate-status-fade'}`}>
-          {/* Top bar in flow — ensures flex-1 image doesn't push buttons off screen */}
           <div
             className="shrink-0 flex items-center justify-between px-4 pb-4"
             style={{ paddingTop: 'max(2.5rem, env(safe-area-inset-top))' }}
@@ -322,7 +243,6 @@ function ScanScreen() {
             <div className="w-10 h-10" />
           </div>
 
-          {/* min-h-0 prevents flex item from overflowing its computed height */}
           <div className="flex-1 min-h-0 flex items-center justify-center p-5">
             <img key={preview.url} src={preview.url} alt="Scan preview" className="max-h-full max-w-full object-contain rounded-xl animate-fade-in-up" />
           </div>
