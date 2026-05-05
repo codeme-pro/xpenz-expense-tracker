@@ -1,26 +1,28 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { LogOut, Sun, Moon, Lock, Pencil, Check, X, Loader2, Eye, EyeOff } from 'lucide-react'
+import { toast } from 'sonner'
 import { useAuth } from '#/context/AuthContext'
+import { useWorkspace } from '#/context/WorkspaceContext'
 import { useTheme } from '#/context/ThemeContext'
 import { TopBar } from '#/components/TopBar'
 import { Avatar } from '#/components/Avatar'
 import { getInitials } from '#/lib/format'
-import { updateUserProfile } from '#/lib/queries'
+import { fetchCurrencies, updateUserProfile } from '#/lib/queries'
 import { supabaseAuth } from '#/lib/supabase'
 
 export const Route = createFileRoute('/_app/settings')({
   component: PreferencesScreen,
 })
 
-const CURRENCIES = ['MYR', 'USD', 'SGD', 'EUR', 'GBP', 'AUD', 'JPY', 'THB', 'IDR', 'PHP']
-
 function PreferencesScreen() {
-  const { user, role, signOut, refreshUser } = useAuth()
+  const { user, signOut, refreshUser } = useAuth()
+  const { current: workspace } = useWorkspace()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
 
   const [editingProfile, setEditingProfile] = useState(false)
   const [editName, setEditName] = useState('')
@@ -38,13 +40,16 @@ function PreferencesScreen() {
     onSuccess: async () => {
       await refreshUser()
       setEditingProfile(false)
+      toast.success('Profile updated')
     },
+    onError: () => toast.error('Failed to save. Try again.'),
   })
 
   const currencyMutation = useMutation({
     mutationFn: (currency: string) =>
       updateUserProfile(user!.id, { reportingCurrency: currency }),
-    onSuccess: () => refreshUser(),
+    onSuccess: () => { refreshUser(); toast.success('Reporting currency updated') },
+    onError: () => toast.error('Failed to update currency. Try again.'),
   })
 
   const passwordMutation = useMutation({
@@ -59,6 +64,7 @@ function PreferencesScreen() {
     },
     onSuccess: () => {
       setPwDone(true)
+      toast.success('Password updated')
       setTimeout(() => {
         setEditingPassword(false)
         setPwDone(false)
@@ -66,6 +72,11 @@ function PreferencesScreen() {
         passwordMutation.reset()
       }, 1500)
     },
+    onError: (err) => toast.error(
+      (err as Error)?.message === 'wrong_old_password'
+        ? 'Current password is incorrect.'
+        : 'Failed to update password. Try again.'
+    ),
   })
 
   const setPwField = (key: keyof typeof pwFields) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -176,9 +187,6 @@ function PreferencesScreen() {
                     placeholder="Department (optional)"
                     className="w-full h-9 px-3 text-sm bg-background border border-border rounded-lg text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                   />
-                  {profileMutation.isError && (
-                    <p className="text-xs text-danger">Failed to save. Try again.</p>
-                  )}
                 </div>
               ) : (
                 <>
@@ -186,7 +194,7 @@ function PreferencesScreen() {
                   {user.department && (
                     <p className="text-xs text-text-2 mt-0.5">{user.department}</p>
                   )}
-                  <p className="text-xs text-primary font-medium capitalize mt-0.5">{role}</p>
+                  <p className="text-xs text-primary font-medium capitalize mt-0.5">{workspace.role}</p>
                 </>
               )}
             </div>
@@ -259,14 +267,6 @@ function PreferencesScreen() {
                   </div>
                 ))}
 
-                {passwordMutation.isError && (
-                  <p className="text-xs text-danger">
-                    {(passwordMutation.error as Error)?.message === 'wrong_old_password'
-                      ? 'Current password is incorrect.'
-                      : 'Failed to update. Try again.'}
-                  </p>
-                )}
-
                 <button
                   onClick={submitPassword}
                   disabled={passwordMutation.isPending || pwDone}
@@ -306,8 +306,8 @@ function PreferencesScreen() {
                   disabled={currencyMutation.isPending}
                   className="text-sm text-text-1 bg-background border border-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary cursor-pointer disabled:opacity-60"
                 >
-                  {CURRENCIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                  {currencies.map((c) => (
+                    <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
                   ))}
                 </select>
               </div>

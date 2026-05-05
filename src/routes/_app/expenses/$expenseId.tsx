@@ -1,13 +1,15 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { X, ImageOff, ChevronDown, Pencil, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus } from 'lucide-react'
-import { fetchExpense, fetchScanSignedUrl, updateExpense } from '#/lib/queries'
+import { X, ImageOff, ChevronDown, Pencil, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { fetchCurrencies, fetchExpense, fetchScanSignedUrl, updateExpense, updateExpenseItems } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { formatCurrency, formatDate } from '#/lib/format'
 import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
 import { useWorkspace } from '#/context/WorkspaceContext'
+import { useAuth } from '#/context/AuthContext'
 import type { Expense } from '#/lib/types'
 
 export const Route = createFileRoute('/_app/expenses/$expenseId')({
@@ -75,11 +77,6 @@ function AuthenticityRow({ verdict }: { verdict: string }) {
   )
 }
 
-const COMMON_CURRENCIES = [
-  'MYR','USD','EUR','GBP','SGD','AUD','CAD','CHF','JPY','CNY',
-  'HKD','THB','IDR','PHP','INR','KRW','TWD','NZD','SEK','NOK',
-  'DKK','AED','SAR','QAR','BHD','KWD','ZAR','BRL','MXN','TRY',
-]
 
 type EditValues = {
   merchant: string
@@ -89,6 +86,16 @@ type EditValues = {
   currency: string
   receiptNumber: string
   paymentMethod: string
+  subtotal: string
+  discount: string
+  rounding: string
+}
+
+type EditItem = {
+  id: string | null
+  name: string
+  quantity: string
+  unitPrice: string
 }
 
 function EditRow({
@@ -110,16 +117,38 @@ const inputCls = 'text-xs text-text-1 bg-background border border-border rounded
 
 type TaxLine = { label: string; amount: number }
 
+const breakdownInputCls = 'w-28 text-xs text-right text-text-1 bg-background border border-border rounded-md px-2 py-1 focus:outline-none focus:border-primary tabular-nums'
+
 function TotalBreakdown({
   expense,
   isEditMode = false,
   editTaxLines = [],
   onTaxLinesChange,
+  editSubtotal,
+  editDiscount,
+  editRounding,
+  onSubtotalChange,
+  onDiscountChange,
+  onRoundingChange,
+  editAmount,
+  liveComputed,
+  onUseComputed,
+  onUseStoredComputed,
 }: {
   expense: Expense
   isEditMode?: boolean
   editTaxLines?: TaxLine[]
   onTaxLinesChange?: (lines: TaxLine[]) => void
+  editSubtotal?: string
+  editDiscount?: string
+  editRounding?: string
+  onSubtotalChange?: (v: string) => void
+  onDiscountChange?: (v: string) => void
+  onRoundingChange?: (v: string) => void
+  editAmount?: string
+  liveComputed?: number | null
+  onUseComputed?: () => void
+  onUseStoredComputed?: () => void
 }) {
   const hasMismatch = expense.flags?.includes('total_mismatch') ?? false
   const showConversion =
@@ -127,21 +156,32 @@ function TotalBreakdown({
     expense.reportingCurrency != null &&
     expense.reportingCurrency !== expense.currency
 
-  // In edit mode use editTaxLines; in view mode use expense.taxBreakdown
   const viewBreakdown = expense.taxBreakdown ?? []
   const breakdown = isEditMode ? editTaxLines : viewBreakdown
   const hasMultiple = breakdown.length >= 2
   const hasSingle = breakdown.length === 1
 
-  // Sum mismatch: breakdown sum ≠ stored tax total
   const breakdownSum = breakdown.reduce((s, t) => s + t.amount, 0)
   const taxSumMismatch = hasMultiple && expense.tax != null && Math.abs(breakdownSum - expense.tax) > 0.01
   const [taxExpanded, setTaxExpanded] = useState(taxSumMismatch)
 
   const nullVal = <span className="text-xs tabular-nums text-text-2/40">—</span>
 
+  // Compute total from stored breakdown/items for view mode (always fresh)
+  const viewComputed = !isEditMode ? (() => {
+    const sub = expense.subtotal
+    const tax = expense.tax ?? 0
+    const disc = expense.discount ?? 0
+    const round = expense.rounding ?? 0
+    const itemsSum = expense.items.some((i) => i.unitPrice != null)
+      ? expense.items.reduce((s, i) => s + (i.totalPrice ?? (i.unitPrice ?? 0) * i.quantity), 0)
+      : null
+    const base = sub ?? itemsSum
+    if (base == null) return null
+    return Math.round((base + tax - disc + round) * 100) / 100
+  })() : null
+
   const taxRow = isEditMode && onTaxLinesChange ? (
-    // ── Edit mode: editable tax lines ────────────────────────────────────────
     <div>
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Tax</span>
@@ -197,7 +237,6 @@ function TotalBreakdown({
       </div>
     </div>
   ) : hasMultiple ? (
-    // ── View mode: collapsible multi-tax ────────────────────────────────────
     <div>
       <button
         onClick={() => setTaxExpanded((v) => !v)}
@@ -206,7 +245,7 @@ function TotalBreakdown({
         <span className="flex items-center gap-1.5 text-xs text-text-2">
           Tax
           <ChevronDown size={11} className={`transition-transform duration-200 ${taxExpanded ? 'rotate-180' : ''}`} />
-          {taxSumMismatch && <AlertTriangle size={11} className="text-amber-500" title="Tax lines don't sum to total" />}
+          {taxSumMismatch && <span title="Tax lines don't sum to total"><AlertTriangle size={11} className="text-amber-500" /></span>}
         </span>
         <span className="text-xs text-text-1 tabular-nums">
           {expense.tax != null ? formatCurrency(expense.tax, expense.currency) : nullVal}
@@ -228,7 +267,6 @@ function TotalBreakdown({
       )}
     </div>
   ) : (
-    // ── View mode: single tax or no breakdown ────────────────────────────────
     <div className="flex justify-between gap-4 px-4 py-2.5">
       <span className="text-xs text-text-2">{hasSingle ? breakdown[0].label : 'Tax'}</span>
       {expense.tax != null
@@ -237,12 +275,25 @@ function TotalBreakdown({
     </div>
   )
 
+  // live computed mismatch (edit mode)
+  const showComputedMismatch = isEditMode && liveComputed != null && onUseComputed != null
+
   return (
     <div>
       {/* Subtotal */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Subtotal</span>
-        {expense.subtotal != null
+        {isEditMode && onSubtotalChange ? (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={editSubtotal ?? ''}
+            onChange={(e) => onSubtotalChange(e.target.value)}
+            placeholder="—"
+            className={breakdownInputCls}
+          />
+        ) : expense.subtotal != null
           ? <span className="text-xs text-text-1 tabular-nums">{formatCurrency(expense.subtotal, expense.currency)}</span>
           : nullVal}
       </div>
@@ -253,7 +304,17 @@ function TotalBreakdown({
       {/* Discount */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Discount</span>
-        {expense.discount != null
+        {isEditMode && onDiscountChange ? (
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={editDiscount ?? ''}
+            onChange={(e) => onDiscountChange(e.target.value)}
+            placeholder="—"
+            className={breakdownInputCls}
+          />
+        ) : expense.discount != null
           ? <span className="text-xs text-text-1 tabular-nums">{expense.discount !== 0 ? '- ' : ''}{formatCurrency(expense.discount, expense.currency)}</span>
           : nullVal}
       </div>
@@ -261,34 +322,67 @@ function TotalBreakdown({
       {/* Rounding */}
       <div className="flex justify-between gap-4 px-4 py-2.5">
         <span className="text-xs text-text-2">Rounding</span>
-        {expense.rounding != null
+        {isEditMode && onRoundingChange ? (
+          <input
+            type="number"
+            step="0.01"
+            value={editRounding ?? ''}
+            onChange={(e) => onRoundingChange(e.target.value)}
+            placeholder="—"
+            className={breakdownInputCls}
+          />
+        ) : expense.rounding != null
           ? <span className="text-xs text-text-1 tabular-nums">{expense.rounding > 0 ? '+ ' : expense.rounding < 0 ? '- ' : ''}{formatCurrency(Math.abs(expense.rounding), expense.currency)}</span>
           : nullVal}
       </div>
 
-      {/* Computed total (dim) */}
-      {expense.computedGrandTotal != null && (
-        <div className="flex justify-between gap-4 px-4 py-2.5">
+      {/* Computed total row (edit mode: live from inputs; view mode: computed from stored data) */}
+      {(isEditMode ? liveComputed : viewComputed) != null && (
+        <div className="flex justify-between items-center gap-4 px-4 py-2.5">
           <span className="text-xs text-text-2/60 italic">Computed total</span>
-          <span className="text-xs text-text-1/60 tabular-nums italic">
-            {formatCurrency(expense.computedGrandTotal, expense.currency)}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-1/60 tabular-nums italic">
+              {formatCurrency((isEditMode ? liveComputed : viewComputed)!, expense.currency)}
+            </span>
+            {!isEditMode && onUseStoredComputed && viewComputed !== expense.amount && (
+              <button
+                onClick={onUseStoredComputed}
+                className="text-[10px] font-medium text-primary hover:text-primary/80 transition-colors duration-150"
+                title="Set as total"
+              >
+                Use
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Grand Total */}
       <div className="flex justify-between gap-4 px-4 py-3 border-t border-border bg-background/40">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs font-bold text-text-1">Total</span>
-          {hasMismatch && <AlertTriangle size={11} className="text-amber-500" title="Item total doesn't match receipt total" />}
+          {hasMismatch && !isEditMode && <span title="Item total doesn't match receipt total"><AlertTriangle size={11} className="text-amber-500" /></span>}
+          {showComputedMismatch && (
+            <button
+              onClick={onUseComputed}
+              className="flex items-center gap-0.5 text-[10px] font-medium text-amber-500 hover:text-amber-400 transition-colors duration-150"
+              title="Copy computed total into amount"
+            >
+              <AlertTriangle size={10} />
+              Use computed
+            </button>
+          )}
         </div>
         <span className="text-sm font-bold text-text-1 tabular-nums">
-          {formatCurrency(expense.amount, expense.currency)}
+          {formatCurrency(
+            isEditMode && editAmount !== undefined ? (parseFloat(editAmount) || expense.amount) : expense.amount,
+            expense.currency,
+          )}
         </span>
       </div>
 
-      {/* Zone B: Currency conversion */}
-      {showConversion && (
+      {/* Zone B: Currency conversion (view mode only) */}
+      {!isEditMode && showConversion && (
         <>
           <div className="flex items-center gap-3 px-4 py-2">
             <div className="h-px flex-1 bg-border" />
@@ -331,9 +425,9 @@ function TotalBreakdown({
 function ExpenseDetail() {
   const { expenseId } = Route.useParams()
   const { ctx } = Route.useSearch()
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { current } = useWorkspace()
+  const { user } = useAuth()
   const role = current.role
 
   const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -343,13 +437,17 @@ function ExpenseDetail() {
   const [isEditMode, setIsEditMode] = useState(false)
   const [editValues, setEditValues] = useState<EditValues>({
     merchant: '', date: '', notes: '', amount: '', currency: '', receiptNumber: '', paymentMethod: '',
+    subtotal: '', discount: '', rounding: '',
   })
   const [editTaxLines, setEditTaxLines] = useState<TaxLine[]>([])
+  const [editItems, setEditItems] = useState<EditItem[]>([])
 
   const { data: expense, isLoading } = useQuery({
     queryKey: queryKeys.expense(expenseId),
     queryFn: () => fetchExpense(expenseId),
   })
+
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
 
   const { data: receiptUrl } = useQuery({
     queryKey: queryKeys.scanUrl(expense?.scanFilePath ?? ''),
@@ -365,7 +463,15 @@ function ExpenseDetail() {
       queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       setIsEditMode(false)
+      toast.success('Changes saved')
     },
+    onError: () => toast.error('Failed to save. Try again.'),
+  })
+
+  const saveItems = useMutation({
+    mutationFn: (patch: Parameters<typeof updateExpenseItems>[1]) =>
+      updateExpenseItems(expenseId, patch, { userId: user!.id, workspaceId: current.id }),
+    onError: () => toast.error('Failed to save items. Try again.'),
   })
 
   const enterEditMode = (exp: Expense) => {
@@ -377,13 +483,24 @@ function ExpenseDetail() {
       currency: exp.currency,
       receiptNumber: exp.receiptNumber ?? '',
       paymentMethod: exp.paymentMethod ?? '',
+      subtotal: exp.subtotal != null ? exp.subtotal.toFixed(2) : '',
+      discount: exp.discount != null ? exp.discount.toFixed(2) : '',
+      rounding: exp.rounding != null ? exp.rounding.toFixed(2) : '',
     })
     setEditTaxLines(exp.taxBreakdown ? [...exp.taxBreakdown] : [])
+    setEditItems(exp.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      quantity: item.quantity.toString(),
+      unitPrice: item.unitPrice != null ? item.unitPrice.toFixed(2) : '',
+    })))
     setDetailsOpen(true)
+    setItemsOpen(true)
+    setBreakdownOpen(true)
     setIsEditMode(true)
   }
 
-  const handleSaveAll = (exp: Expense) => {
+  const handleSaveAll = async (exp: Expense) => {
     const updates: Parameters<typeof updateExpense>[1] = {}
     const merchant = editValues.merchant.trim()
     const date = editValues.date || null
@@ -392,6 +509,9 @@ function ExpenseDetail() {
     const currency = editValues.currency
     const receiptNumber = editValues.receiptNumber.trim() || null
     const paymentMethod = editValues.paymentMethod.trim() || null
+    const subtotal = editValues.subtotal !== '' ? Math.round(parseFloat(editValues.subtotal) * 100) / 100 : null
+    const discount = editValues.discount !== '' ? Math.round(parseFloat(editValues.discount) * 100) / 100 : null
+    const rounding = editValues.rounding !== '' ? Math.round(parseFloat(editValues.rounding) * 100) / 100 : null
 
     if (merchant !== exp.merchant) updates.merchant = merchant
     if (date !== exp.date) updates.date = date
@@ -400,6 +520,9 @@ function ExpenseDetail() {
     if (currency !== exp.currency) updates.currency = currency
     if (receiptNumber !== exp.receiptNumber) updates.receiptNumber = receiptNumber
     if (paymentMethod !== exp.paymentMethod) updates.paymentMethod = paymentMethod
+    if (subtotal !== exp.subtotal) updates.subtotal = subtotal
+    if (discount !== exp.discount) updates.discount = discount
+    if (rounding !== exp.rounding) updates.rounding = rounding
 
     const origTax = exp.taxBreakdown ?? []
     const taxChanged =
@@ -407,10 +530,51 @@ function ExpenseDetail() {
       editTaxLines.some((l, i) => l.label !== origTax[i]?.label || l.amount !== origTax[i]?.amount)
     if (taxChanged) updates.taxBreakdown = editTaxLines.length > 0 ? editTaxLines : null
 
-    if (Object.keys(updates).length > 0) {
-      saveAll.mutate(updates)
-    } else {
-      setIsEditMode(false)
+    const origItems = exp.items
+    const editItemIds = new Set(editItems.filter((i) => i.id !== null).map((i) => i.id as string))
+
+    const toDelete = origItems.filter((i) => !editItemIds.has(i.id)).map((i) => i.id)
+
+    const mapRow = (item: EditItem) => {
+      const qty = Math.max(1, parseInt(item.quantity) || 1)
+      const unitPrice = item.unitPrice !== '' ? Math.round(parseFloat(item.unitPrice) * 100) / 100 : null
+      const totalPrice = unitPrice != null ? Math.round(unitPrice * qty * 100) / 100 : null
+      return { name: item.name.trim(), quantity: qty, unitPrice, totalPrice }
+    }
+
+    const toInsert = editItems
+      .filter((item) => item.id === null && item.name.trim())
+      .map(mapRow)
+
+    const toUpdate = editItems
+      .filter((item) => {
+        if (!item.id || !item.name.trim()) return false
+        const orig = origItems.find((o) => o.id === item.id)
+        if (!orig) return false
+        const qty = Math.max(1, parseInt(item.quantity) || 1)
+        const unitPrice = item.unitPrice !== '' ? Math.round(parseFloat(item.unitPrice) * 100) / 100 : null
+        return item.name.trim() !== orig.name || qty !== orig.quantity || unitPrice !== orig.unitPrice
+      })
+      .map((item) => ({ id: item.id as string, ...mapRow(item) }))
+
+    const itemPatch = { toInsert, toUpdate, toDelete }
+    const hasPatch = toDelete.length > 0 || toInsert.length > 0 || toUpdate.length > 0
+
+    try {
+      if (hasPatch) await saveItems.mutateAsync(itemPatch)
+      if (Object.keys(updates).length > 0) {
+        await saveAll.mutateAsync(updates)
+        // saveAll.onSuccess handles invalidation + toast + setIsEditMode(false)
+      } else {
+        if (hasPatch) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
+          queryClient.invalidateQueries({ queryKey: ['expenses'] })
+          toast.success('Changes saved')
+        }
+        setIsEditMode(false)
+      }
+    } catch {
+      // errors displayed via toast
     }
   }
 
@@ -425,12 +589,42 @@ function ExpenseDetail() {
   }
 
   const isDraft = expense.status === 'draft'
+  const canEdit = isDraft && ctx !== 'workspace' && user?.id === expense.submittedBy
   const showReporting =
     expense.reportingCurrency &&
     expense.reportingCurrency !== expense.currency &&
     expense.reportingAmount != null
   const isAdminOrOwner = role === 'admin' || role === 'owner'
   const showAuthenticity = current.isPremium && isAdminOrOwner && ctx === 'workspace'
+
+  // live computed total from edit state (for "Use computed" feature)
+  const liveComputed = isEditMode ? (() => {
+    const sub = editValues.subtotal !== '' ? parseFloat(editValues.subtotal) : null
+    const taxSum = editTaxLines.reduce((s, t) => s + t.amount, 0)
+    const disc = editValues.discount !== '' ? parseFloat(editValues.discount) : null
+    const round = editValues.rounding !== '' ? parseFloat(editValues.rounding) : null
+    // Fall back to items sum when no subtotal
+    const itemsSum = editItems.some((i) => i.unitPrice !== '')
+      ? editItems.reduce((s, item) => {
+          const qty = Math.max(1, parseInt(item.quantity) || 1)
+          return s + (item.unitPrice !== '' ? (parseFloat(item.unitPrice) || 0) * qty : 0)
+        }, 0)
+      : null
+    const base = sub ?? itemsSum
+    if (base == null) return null
+    return Math.round((base + taxSum - (disc ?? 0) + (round ?? 0)) * 100) / 100
+  })() : null
+
+  const handleUseComputed = () => {
+    if (liveComputed != null) {
+      setEditValues((v) => ({ ...v, amount: liveComputed.toFixed(2) }))
+    }
+  }
+
+  const handleUseStoredComputed = () => {
+    if (!expense.computedGrandTotal) return
+    enterEditMode({ ...expense, amount: expense.computedGrandTotal })
+  }
 
   const receiptThumb = receiptUrl ? (
     <button
@@ -468,6 +662,7 @@ function ExpenseDetail() {
     </button>
   )
 
+  const itemCount = isEditMode ? editItems.length : expense.items.length
   const lineItemsHeader = (
     <button
       onClick={() => setItemsOpen((v) => !v)}
@@ -476,7 +671,7 @@ function ExpenseDetail() {
       <h3 className="text-xs font-semibold text-text-2 uppercase tracking-wider">
         Line Items
         <span className="ml-1.5 font-normal normal-case tracking-normal text-text-2/60">
-          ({expense.items.length})
+          ({itemCount})
         </span>
       </h3>
       <ChevronDown
@@ -487,22 +682,89 @@ function ExpenseDetail() {
   )
 
   const lineItemsList = itemsOpen ? (
-    <div className="divide-y divide-border">
-      {expense.items.map((item) => (
-        <div key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 animate-fade-in-up">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-text-1 leading-snug">{item.name}</p>
-            {item.categoryName && (
-              <p className="text-xs text-text-2 mt-0.5">{item.categoryName}</p>
-            )}
+    isEditMode ? (
+      <div className="p-3 space-y-2">
+        {editItems.map((item, i) => {
+          const qty = parseInt(item.quantity) || 1
+          const unitP = item.unitPrice !== '' ? parseFloat(item.unitPrice) : null
+          const total = unitP != null ? unitP * qty : null
+          return (
+            <div key={i} className="bg-background rounded-xl border border-border p-3 space-y-2.5 animate-fade-in-up" style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={item.name}
+                  onChange={(e) => setEditItems((prev) => prev.map((it, j) => j === i ? { ...it, name: e.target.value } : it))}
+                  placeholder="Item name"
+                  className={inputCls + ' flex-1'}
+                />
+                <button
+                  onClick={() => setEditItems((prev) => prev.filter((_, j) => j !== i))}
+                  className="text-danger/50 hover:text-danger transition-colors duration-150 shrink-0"
+                  aria-label="Remove item"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-text-2 uppercase tracking-wide">Qty</p>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={item.quantity}
+                    onChange={(e) => setEditItems((prev) => prev.map((it, j) => j === i ? { ...it, quantity: e.target.value } : it))}
+                    className={inputCls + ' text-center'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-text-2 uppercase tracking-wide">Unit Price</p>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={item.unitPrice}
+                    onChange={(e) => setEditItems((prev) => prev.map((it, j) => j === i ? { ...it, unitPrice: e.target.value } : it))}
+                    placeholder="0.00"
+                    className={inputCls + ' text-right'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-text-2 uppercase tracking-wide">Total</p>
+                  <p className="text-xs font-semibold text-text-1 tabular-nums h-[30px] flex items-center justify-end">
+                    {total != null ? formatCurrency(total, expense.currency) : <span className="text-text-2/40">—</span>}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+        <button
+          onClick={() => setEditItems((prev) => [...prev, { id: null, name: '', quantity: '1', unitPrice: '' }])}
+          className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors duration-150 px-1 py-1"
+        >
+          <Plus size={11} /> Add item
+        </button>
+      </div>
+    ) : (
+      <div className="divide-y divide-border">
+        {expense.items.map((item) => (
+          <div key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 animate-fade-in-up">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-text-1 leading-snug">{item.name}</p>
+              {item.categoryName && (
+                <p className="text-xs text-text-2 mt-0.5">{item.categoryName}</p>
+              )}
+            </div>
+            <span className="text-xs text-text-1 font-medium tabular-nums shrink-0">
+              {item.quantity > 1 ? `${item.quantity}× ` : ''}
+              {formatCurrency(item.totalPrice ?? item.unitPrice ?? 0, expense.currency)}
+            </span>
           </div>
-          <span className="text-xs text-text-1 font-medium tabular-nums shrink-0">
-            {item.quantity > 1 ? `${item.quantity}× ` : ''}
-            {formatCurrency(item.totalPrice ?? item.unitPrice ?? 0, expense.currency)}
-          </span>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    )
   ) : null
 
   const viewMetaRows = (
@@ -537,7 +799,7 @@ function ExpenseDetail() {
       </EditRow>
       <EditRow label="Currency">
         <select value={editValues.currency} onChange={set('currency')} className={inputCls}>
-          {COMMON_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
         </select>
       </EditRow>
       <EditRow label="Merchant">
@@ -555,27 +817,6 @@ function ExpenseDetail() {
       <EditRow label="Payment">
         <input type="text" value={editValues.paymentMethod} onChange={set('paymentMethod')} className={inputCls} />
       </EditRow>
-      {expense.category && <DetailRow label="Category" value={expense.category} />}
-      {/* Save / Cancel */}
-      <div className="flex gap-2 px-4 py-3 bg-background/60 border-t border-border">
-        <button
-          onClick={() => setIsEditMode(false)}
-          className="flex-1 h-9 text-xs text-text-2 border border-border rounded-lg cursor-pointer hover:bg-nav-hover-bg transition-colors duration-150"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => handleSaveAll(expense)}
-          disabled={saveAll.isPending}
-          className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-semibold text-white bg-primary rounded-lg disabled:opacity-50 cursor-pointer"
-        >
-          {saveAll.isPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-          Save changes
-        </button>
-      </div>
-      {saveAll.isError && (
-        <p className="text-xs text-danger px-4 pb-3">Failed to save. Try again.</p>
-      )}
     </>
   )
 
@@ -597,7 +838,7 @@ function ExpenseDetail() {
                 </span>
               )}
               <StatusBadge status={expense.status} />
-              {isDraft && !isEditMode && (
+              {canEdit && !isEditMode && (
                 <button
                   onClick={() => enterEditMode(expense)}
                   className="flex items-center gap-1 h-6 px-2 text-[11px] font-medium text-text-2 border border-border rounded-lg cursor-pointer hover:text-primary hover:border-primary/40 transition-colors duration-150"
@@ -632,7 +873,7 @@ function ExpenseDetail() {
         </div>
 
         {/* Line items */}
-        {expense.items.length > 0 && (
+        {(isEditMode || expense.items.length > 0) && (
           <div className="bg-surface rounded-xl border border-border shadow-sm overflow-hidden">
             <div className="border-b border-border bg-background/40">
               {lineItemsHeader}
@@ -652,10 +893,21 @@ function ExpenseDetail() {
               isEditMode={isEditMode}
               editTaxLines={editTaxLines}
               onTaxLinesChange={setEditTaxLines}
+              editSubtotal={editValues.subtotal}
+              editDiscount={editValues.discount}
+              editRounding={editValues.rounding}
+              onSubtotalChange={(v) => setEditValues((ev) => ({ ...ev, subtotal: v }))}
+              onDiscountChange={(v) => setEditValues((ev) => ({ ...ev, discount: v }))}
+              onRoundingChange={(v) => setEditValues((ev) => ({ ...ev, rounding: v }))}
+              editAmount={isEditMode ? editValues.amount : undefined}
+              liveComputed={liveComputed}
+              onUseComputed={handleUseComputed}
+              onUseStoredComputed={canEdit ? handleUseStoredComputed : undefined}
             />
           )}
         </div>
 
+        {isEditMode && <div className="h-20" />}
       </div>
 
       {/* ── DESKTOP layout ── */}
@@ -678,7 +930,7 @@ function ExpenseDetail() {
                     </span>
                   )}
                   <StatusBadge status={expense.status} />
-                  {isDraft && !isEditMode && (
+                  {canEdit && !isEditMode && (
                     <button
                       onClick={() => enterEditMode(expense)}
                       className="flex items-center gap-1 h-7 px-2.5 text-xs font-medium text-text-2 border border-border rounded-lg cursor-pointer hover:text-primary hover:border-primary/40 transition-colors duration-150"
@@ -711,7 +963,7 @@ function ExpenseDetail() {
             </div>
 
             {/* Line items */}
-            {expense.items.length > 0 && (
+            {(isEditMode || expense.items.length > 0) && (
               <div className="border-b border-border">
                 <div className="bg-background/40 border-b border-border">
                   {lineItemsHeader}
@@ -731,6 +983,16 @@ function ExpenseDetail() {
               isEditMode={isEditMode}
               editTaxLines={editTaxLines}
               onTaxLinesChange={setEditTaxLines}
+              editSubtotal={editValues.subtotal}
+              editDiscount={editValues.discount}
+              editRounding={editValues.rounding}
+              onSubtotalChange={(v) => setEditValues((ev) => ({ ...ev, subtotal: v }))}
+              onDiscountChange={(v) => setEditValues((ev) => ({ ...ev, discount: v }))}
+              onRoundingChange={(v) => setEditValues((ev) => ({ ...ev, rounding: v }))}
+              editAmount={isEditMode ? editValues.amount : undefined}
+              liveComputed={liveComputed}
+              onUseComputed={handleUseComputed}
+              onUseStoredComputed={canEdit ? handleUseStoredComputed : undefined}
             />
           )}
             </div>
@@ -757,7 +1019,30 @@ function ExpenseDetail() {
             )}
           </div>
         </div>
+        {isEditMode && <div className="h-20" />}
       </div>
+
+      {/* ── Floating edit bar ── */}
+      {isEditMode && (
+        <div className="fixed bottom-[76px] lg:bottom-5 left-0 lg:left-56 right-0 z-50 px-4 lg:px-8 pointer-events-none">
+          <div className="pointer-events-auto lg:max-w-lg lg:mx-auto bg-surface/95 backdrop-blur-md border border-border rounded-2xl shadow-xl px-3 py-2.5 flex gap-2">
+              <button
+              onClick={() => setIsEditMode(false)}
+              className="flex-1 h-9 text-sm text-text-2 border border-border rounded-xl cursor-pointer hover:bg-nav-hover-bg transition-colors duration-150"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleSaveAll(expense)}
+              disabled={saveAll.isPending || saveItems.isPending}
+              className="flex-1 h-9 flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-primary rounded-xl disabled:opacity-50 cursor-pointer"
+            >
+              {(saveAll.isPending || saveItems.isPending) ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Save changes
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Lightbox */}
       {lightboxOpen && receiptUrl && (

@@ -108,14 +108,14 @@ Deno.serve(async (req: Request) => {
       }),
     })
     .then(async (res) => {
-      // Non-2xx means gateway rejection (e.g. 401, 403) — function never ran
-      if (!res.ok) {
+      // 400 = function ran its catch block and already updated the scan — don't overwrite
+      // 401/403/5xx = gateway rejection before function body ran — update scan ourselves
+      if (!res.ok && res.status !== 400) {
         await supabaseAdmin
           .from("scans")
           .update({ status: "failed", error_reason: `[process-receipt] HTTP ${res.status}` })
           .eq("id", scanId);
       }
-      // 2xx → process-receipt accepted and completed (or is running async)
     })
     .catch(async (err: Error) => {
       await supabaseAdmin

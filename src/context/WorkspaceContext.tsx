@@ -14,6 +14,7 @@ export interface Workspace {
   ownerName: string
   mileageRate: number
   isPremium: boolean
+  baseCurrency: string
 }
 
 const PLACEHOLDER: Workspace = {
@@ -26,17 +27,37 @@ const PLACEHOLDER: Workspace = {
   ownerName: '',
   mileageRate: 0.80,
   isPremium: false,
+  baseCurrency: 'MYR',
 }
 
 interface WorkspaceContextValue {
   current: Workspace
   workspaces: Workspace[]
   loading: boolean
-  switchWorkspace: (id: string) => void
+  switchWorkspace: (id: string) => Promise<void>
   refreshWorkspace: () => Promise<void>
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
+
+const STORAGE_KEY = 'xpenz_workspace_id'
+
+function deriveStatus(plan: string, planExpiresAt: string | null): Pick<Workspace, 'status' | 'trialDaysLeft'> {
+  if (plan !== 'trial') return { status: 'active', trialDaysLeft: 0 }
+  const expiresAt = planExpiresAt ? new Date(planExpiresAt).getTime() : null
+  const trialDaysLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 86400000)) : 0
+  return { status: trialDaysLeft > 0 ? 'trial' : 'locked', trialDaysLeft }
+}
+
+async function fetchScansThisMonth(workspaceId: string): Promise<number> {
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+  const { count } = await db
+    .from('scans')
+    .select('id', { count: 'exact', head: true })
+    .eq('workspace_id', workspaceId)
+    .gte('created_at', monthStart)
+  return count ?? 0
+}
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
@@ -45,67 +66,78 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!user?.workspaceId) {
+    if (!user?.id) {
       setLoading(false)
       return
     }
-    loadWorkspace(user.workspaceId, user.role)
-  }, [user?.workspaceId, user?.role])
+    loadWorkspaces(user.id)
+  }, [user?.id])
 
-  async function loadWorkspace(workspaceId: string, role: UserRole) {
-    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+  async function loadWorkspaces(userId: string) {
+    setLoading(true)
 
-    const [wsResult, scansResult] = await Promise.all([
-      db
-        .from('workspaces')
-        .select('id, name, plan, plan_expires_at, mileage_rate_per_km')
-        .eq('id', workspaceId)
-        .maybeSingle(),
-      db
-        .from('scans')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId)
-        .gte('created_at', monthStart),
-    ])
+    const { data: memberships, error } = await db
+      .from('workspace_members')
+      .select('role, workspace:workspaces(id, name, plan, plan_expires_at, mileage_rate_per_km, base_currency)')
+      .eq('user_id', userId)
 
-    const ws = wsResult.data
-    if (!ws) {
+    if (error || !memberships?.length) {
       setLoading(false)
       return
     }
 
-    const now = Date.now()
-    const expiresAt = ws.plan_expires_at ? new Date(ws.plan_expires_at).getTime() : null
-    const trialDaysLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / 86400000)) : 0
-    const status: Workspace['status'] =
-      ws.plan === 'trial' ? (trialDaysLeft > 0 ? 'trial' : 'locked') : 'active'
+    const mapped: Workspace[] = memberships.map((m) => {
+      const ws = m.workspace as {
+        id: string
+        name: string
+        plan: string
+        plan_expires_at: string | null
+        mileage_rate_per_km: number | null
+        base_currency: string | null
+      }
+      return {
+        id: ws.id,
+        name: ws.name,
+        role: m.role as UserRole,
+        ...deriveStatus(ws.plan, ws.plan_expires_at),
+        scansThisMonth: 0,
+        ownerName: '',
+        mileageRate: Number(ws.mileage_rate_per_km ?? 0.80),
+        isPremium: ws.plan === 'premium',
+        baseCurrency: ws.base_currency ?? 'MYR',
+      }
+    })
 
-    const workspace: Workspace = {
-      id: ws.id,
-      name: ws.name,
-      role,
-      status,
-      trialDaysLeft,
-      scansThisMonth: scansResult.count ?? 0,
-      ownerName: '',
-      mileageRate: Number(ws.mileage_rate_per_km ?? 0.80),
-      isPremium: ws.plan === 'premium',
-    }
+    // Determine active workspace
+    const savedId = localStorage.getItem(STORAGE_KEY)
+    const active = (savedId ? mapped.find((w) => w.id === savedId) : null) ?? mapped[0]
 
-    setCurrent(workspace)
-    setWorkspaces([workspace])
+    // Persist active to localStorage
+    localStorage.setItem(STORAGE_KEY, active.id)
+
+    // Fetch scans count for active workspace
+    const scansThisMonth = await fetchScansThisMonth(active.id)
+    const activeWithScans = { ...active, scansThisMonth }
+
+    const finalList = mapped.map((w) => (w.id === active.id ? activeWithScans : w))
+    setWorkspaces(finalList)
+    setCurrent(activeWithScans)
     setLoading(false)
   }
 
-  function switchWorkspace(id: string) {
+  async function switchWorkspace(id: string) {
     const ws = workspaces.find((w) => w.id === id)
-    if (ws) setCurrent(ws)
+    if (!ws) return
+    localStorage.setItem(STORAGE_KEY, id)
+    // Fetch fresh scans count for newly selected workspace
+    const scansThisMonth = await fetchScansThisMonth(id)
+    const updated = { ...ws, scansThisMonth }
+    setCurrent(updated)
+    setWorkspaces((prev) => prev.map((w) => (w.id === id ? updated : w)))
   }
 
   async function refreshWorkspace() {
-    if (user?.workspaceId && user.role) {
-      await loadWorkspace(user.workspaceId, user.role)
-    }
+    if (user?.id) await loadWorkspaces(user.id)
   }
 
   return (

@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { AlertTriangle, Plus, Trash2, CheckCircle, XCircle, Loader2, Car, X, Check } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   fetchReport, submitReport, approveReport, rejectReport,
   addExpenseToReport, removeExpenseFromReport,
@@ -90,37 +91,44 @@ function ReportDetail() {
 
   const submitMutation = useMutation({
     mutationFn: () => submitReport(reportId),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); toast.success('Report submitted for approval') },
+    onError: () => toast.error('Failed to submit. Try again.'),
   })
 
   const approveMutation = useMutation({
     mutationFn: () => approveReport(reportId),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); toast.success('Report approved') },
+    onError: () => toast.error('Failed to approve. Try again.'),
   })
 
   const rejectMutation = useMutation({
     mutationFn: () => rejectReport(reportId, rejectNote),
-    onSuccess: () => { invalidate(); setShowRejectModal(false); setRejectNote('') },
+    onSuccess: () => { invalidate(); setShowRejectModal(false); setRejectNote(''); toast.success('Report rejected') },
+    onError: () => toast.error('Failed to reject. Try again.'),
   })
 
   const addExpenses = useMutation({
     mutationFn: (ids: string[]) => Promise.all(ids.map((id) => addExpenseToReport(reportId, id))),
-    onSuccess: () => { invalidate(); setAddingExpenses(false); setSelectedExpenseIds(new Set()) },
+    onSuccess: (_, ids) => { invalidate(); setAddingExpenses(false); setSelectedExpenseIds(new Set()); toast.success(`${ids.length} expense${ids.length > 1 ? 's' : ''} added`) },
+    onError: () => toast.error('Failed to add expenses. Try again.'),
   })
 
   const removeExpense = useMutation({
     mutationFn: (expenseId: string) => removeExpenseFromReport(expenseId),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); toast.success('Expense removed') },
+    onError: () => toast.error('Failed to remove expense. Try again.'),
   })
 
   const addMileageEntries = useMutation({
     mutationFn: (ids: string[]) => Promise.all(ids.map((id) => addMileageToReport(reportId, id))),
-    onSuccess: () => { invalidate(); setAddingMileage(false); setSelectedMileageIds(new Set()) },
+    onSuccess: (_, ids) => { invalidate(); setAddingMileage(false); setSelectedMileageIds(new Set()); toast.success(`${ids.length} mileage entr${ids.length > 1 ? 'ies' : 'y'} added`) },
+    onError: () => toast.error('Failed to add mileage. Try again.'),
   })
 
   const removeMileageEntry = useMutation({
     mutationFn: (mileageId: string) => removeMileageFromReport(mileageId),
-    onSuccess: invalidate,
+    onSuccess: () => { invalidate(); toast.success('Mileage entry removed') },
+    onError: () => toast.error('Failed to remove mileage. Try again.'),
   })
 
   const closeExpensePicker = () => { setAddingExpenses(false); setSelectedExpenseIds(new Set()) }
@@ -382,9 +390,6 @@ function ReportDetail() {
 
   const submitCTA = isDraft && !isAdminCtx ? (
     <div className="space-y-1.5">
-      {submitMutation.isError && (
-        <p className="text-xs text-danger text-center">Failed to submit. Please try again.</p>
-      )}
       <button
         onClick={() => submitMutation.mutate()}
         disabled={!canSubmit || submitMutation.isPending}
@@ -835,9 +840,6 @@ function ReportDetail() {
               autoFocus
               className="w-full text-xs text-text-1 bg-background border border-border rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:border-primary mb-3"
             />
-            {rejectMutation.isError && (
-              <p className="text-xs text-danger mb-2">Failed to reject. Try again.</p>
-            )}
             <div className="flex gap-2">
               <button
                 onClick={() => setShowRejectModal(false)}

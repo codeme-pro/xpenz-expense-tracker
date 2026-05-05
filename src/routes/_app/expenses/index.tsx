@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Receipt, Trash2, MoreVertical, X, Check, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { fetchExpenses, deleteExpense } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
@@ -57,7 +58,11 @@ function ExpensesScreen() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteExpense(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expenses'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      toast.success('Expense deleted')
+    },
+    onError: () => toast.error('Failed to delete. Try again.'),
   })
 
   const handleFilterChange = (updates: Partial<PersonalFilters>) => {

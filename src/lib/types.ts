@@ -1,3 +1,9 @@
+export interface Currency {
+  code: string
+  name: string
+  symbol: string | null
+}
+
 export type ExpenseStatus = 'draft' | 'submitted' | 'approved' | 'rejected'
 export type UserRole = 'member' | 'admin' | 'owner'
 
@@ -39,6 +45,7 @@ export interface Expense {
   currency: string
   reportingCurrency: string | null
   reportingAmount: number | null
+  reportingAmounts: Record<string, number> | null
   currencySource: string | null
   category: string | null // human-readable category name
   status: ExpenseStatus
@@ -106,6 +113,7 @@ export interface MileageEntry {
   createdAt: string
   reportId: string | null
   reportTitle: string | null
+  transportMode: string | null
 }
 
 export type WorkspacePeriod = 'all_time' | 'this_month' | 'last_month' | 'last_3_months'

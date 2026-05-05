@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { LogOut, User, Building2, Sun, Moon } from 'lucide-react'
 import { useAuth } from '#/context/AuthContext'
+import { useWorkspace } from '#/context/WorkspaceContext'
 import { useTheme } from '#/context/ThemeContext'
 import { TopBar } from '#/components/TopBar'
 import { Avatar } from '#/components/Avatar'
@@ -11,7 +12,8 @@ export const Route = createFileRoute('/_app/profile')({
 })
 
 function ProfileScreen() {
-  const { user, role, signOut } = useAuth()
+  const { user, signOut } = useAuth()
+  const { current: workspace } = useWorkspace()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
@@ -32,7 +34,7 @@ function ProfileScreen() {
             <p className="text-sm font-semibold text-text-1">{user.name}</p>
             <p className="text-xs text-text-2 truncate">{user.email}</p>
             <p className="text-xs text-primary font-medium capitalize mt-0.5">
-              {role}
+              {workspace.role}
             </p>
           </div>
         </div>
@@ -65,7 +67,7 @@ function ProfileScreen() {
           <div className="h-px bg-border mx-4" />
           <div className="flex items-center gap-2 px-4 py-3">
             <User size={16} className="text-text-2 shrink-0" />
-            <span className="text-sm text-text-2 capitalize">{role}</span>
+            <span className="text-sm text-text-2 capitalize">{workspace.role}</span>
           </div>
         </div>
 

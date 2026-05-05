@@ -56,7 +56,7 @@ export function BottomNav() {
             className={linkCls(isActive(['/reports', '/expenses', '/mileage']))}
           >
             <span className={iconCls(isActive(['/reports', '/expenses', '/mileage']))}><FileText size={20} /></span>
-            <span className="text-[10px] font-semibold leading-none">Reports</span>
+            <span className="text-[10px] font-semibold leading-none">Activity</span>
           </Link>
         </li>
 

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Users, UserPlus, Upload, X, Copy, Check, Mail, Link } from 'lucide-react'
+import { toast } from 'sonner'
 import { useAuth } from '#/context/AuthContext'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { Avatar } from '#/components/Avatar'
@@ -15,13 +16,13 @@ export const Route = createFileRoute('/_app/workspace/members')({
 })
 
 function WorkspaceMembersScreen() {
-  const { role, user } = useAuth()
+  const { user } = useAuth()
   const { current } = useWorkspace()
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
-  const isOwner = role === 'owner'
+  const isOwner = current.role === 'owner'
   const [showModal, setShowModal] = useState(false)
   const [inviteFields, setInviteFields] = useState({ email: '', role: 'member' as 'member' | 'admin' })
   const [inviteError, setInviteError] = useState('')
@@ -48,8 +49,9 @@ function WorkspaceMembersScreen() {
       const code = await createInvite(current.id, user.id, inviteFields.email, inviteFields.role)
       const link = `${window.location.origin}/join/${code}`
       setInviteLink(link)
+      toast.success('Invite link generated')
     } catch {
-      setInviteError('Failed to generate invite. Please try again.')
+      toast.error('Failed to generate invite. Try again.')
     } finally {
       setInviteLoading(false)
     }

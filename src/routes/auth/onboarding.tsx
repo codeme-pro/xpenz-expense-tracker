@@ -1,34 +1,19 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Building2, X } from 'lucide-react'
 import { supabaseAuth, db } from '#/lib/supabase'
 import { useAuth } from '#/context/AuthContext'
+import { fetchCurrencies } from '#/lib/queries'
 
 export const Route = createFileRoute('/auth/onboarding')({
   component: Onboarding,
 })
 
-const CURRENCIES = [
-  { code: 'MYR', name: 'Malaysian Ringgit' },
-  { code: 'USD', name: 'US Dollar' },
-  { code: 'EUR', name: 'Euro' },
-  { code: 'GBP', name: 'British Pound' },
-  { code: 'SGD', name: 'Singapore Dollar' },
-  { code: 'AUD', name: 'Australian Dollar' },
-  { code: 'JPY', name: 'Japanese Yen' },
-  { code: 'CNY', name: 'Chinese Yuan' },
-  { code: 'IDR', name: 'Indonesian Rupiah' },
-  { code: 'THB', name: 'Thai Baht' },
-  { code: 'PHP', name: 'Philippine Peso' },
-  { code: 'INR', name: 'Indian Rupee' },
-  { code: 'CAD', name: 'Canadian Dollar' },
-  { code: 'HKD', name: 'Hong Kong Dollar' },
-  { code: 'KRW', name: 'South Korean Won' },
-]
-
 function Onboarding() {
   const navigate = useNavigate()
   const { refreshUser } = useAuth()
+  const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
   const [currency, setCurrency] = useState('MYR')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -111,7 +96,7 @@ function Onboarding() {
               onChange={(e) => setCurrency(e.target.value)}
               className="w-full h-11 px-3 text-sm border border-border rounded-xl bg-surface text-text-1 focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
             >
-              {CURRENCIES.map((c) => (
+              {currencies.map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.code} — {c.name}
                 </option>

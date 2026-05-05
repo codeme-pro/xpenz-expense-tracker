@@ -1,5 +1,5 @@
 import { db, supabaseAuth } from './supabase'
-import type { Expense, ExpenseItem, ExpenseStatus, InboxItem, MileageEntry, PersonalFilters, Report, UserRole, WorkspaceMember, WorkspaceFilters, WorkspacePeriod } from './types'
+import type { Currency, Expense, ExpenseItem, ExpenseStatus, InboxItem, MileageEntry, PersonalFilters, Report, UserRole, WorkspaceMember, WorkspaceFilters, WorkspacePeriod } from './types'
 
 type RawItem = {
   id: string
@@ -32,6 +32,7 @@ function mapExpense(row: RawExpense): Expense {
     currency: (row.currency as string | null) ?? 'MYR',
     reportingCurrency: row.reporting_currency as string | null,
     reportingAmount: row.reporting_amount as number | null,
+    reportingAmounts: (row.reporting_amounts as Record<string, number> | null) ?? null,
     currencySource: row.currency_source as string | null,
     category: items[0]?.categoryName ?? null,
     status: row.status as ExpenseStatus,
@@ -65,7 +66,7 @@ function mapExpense(row: RawExpense): Expense {
 
 const EXPENSE_SELECT = `
   id, user_id, merchant, amount, currency, date, status, notes,
-  report_id, scan_id, reporting_currency, reporting_amount, currency_source,
+  report_id, scan_id, reporting_currency, reporting_amount, reporting_amounts, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
   subtotal, tax, tax_breakdown, discount, rounding, computed_grand_total,
   exchange_rate, exchange_rate_date, exchange_rate_source,
@@ -138,14 +139,16 @@ function mapMileage(row: RawMileage): MileageEntry {
     createdAt: row.created_at as string,
     reportId: row.report_id as string | null ?? null,
     reportTitle: (row.reports as { id: string; title: string } | null)?.title ?? null,
+    transportMode: (row.lookup_transport_mode as { name: string } | null)?.name ?? null,
   }
 }
 
 const WORKSPACE_MILEAGE_SELECT = `
   id, user_id, scan_id, from_location, to_location, distance, unit,
-  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at,
+  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at, transport_mode,
   reports!report_id ( id, title ),
-  users!user_id ( name )
+  users!user_id ( name ),
+  lookup_transport_mode!transport_mode ( name )
 `
 
 function getDateRange(period?: WorkspacePeriod): { from: string | null; to: string | null } {
@@ -168,8 +171,9 @@ function getDateRange(period?: WorkspacePeriod): { from: string | null; to: stri
 
 const MILEAGE_SELECT = `
   id, user_id, scan_id, from_location, to_location, distance, unit,
-  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at,
-  reports!report_id ( id, title )
+  duration, source, purpose, rate_per_km, amount, estimated_amount, status, report_id, created_at, transport_mode,
+  reports!report_id ( id, title ),
+  lookup_transport_mode!transport_mode ( name )
 `
 
 export async function fetchMileage(filters?: PersonalFilters): Promise<MileageEntry[]> {
@@ -343,7 +347,7 @@ type RawMember = {
   users: { name: string; department: string | null }
 }
 
-export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
+export async function fetchWorkspaceMembers(baseCurrency: string): Promise<WorkspaceMember[]> {
   const [membersRes, expensesRes] = await Promise.all([
     db
       .from('workspace_members')
@@ -351,7 +355,7 @@ export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
       .order('created_at', { ascending: true }),
     db
       .from('expenses')
-      .select('user_id, amount, reporting_amount, status')
+      .select('user_id, amount, reporting_amount, reporting_amounts, status')
       .neq('status', 'rejected'),
   ])
   if (membersRes.error) throw membersRes.error
@@ -365,10 +369,11 @@ export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
       name: m.users.name,
       department: m.users.department,
       role: m.role as UserRole,
-      totalExpenses: userExpenses.reduce(
-        (sum, e) => sum + (((e.reporting_amount ?? e.amount) as number) ?? 0),
-        0,
-      ),
+      totalExpenses: userExpenses.reduce((sum, e) => {
+        const amounts = e.reporting_amounts as Record<string, number> | null
+        const val = amounts?.[baseCurrency] ?? (e.reporting_amount as number | null) ?? (e.amount as number)
+        return sum + val
+      }, 0),
       pendingExpenses: userExpenses.filter((e) => e.status === 'submitted').length,
     }
   })
@@ -405,6 +410,9 @@ export async function updateExpense(
     receiptNumber?: string | null
     paymentMethod?: string | null
     taxBreakdown?: { label: string; amount: number }[] | null
+    subtotal?: number | null
+    discount?: number | null
+    rounding?: number | null
   },
 ): Promise<void> {
   const dbUpdates: Record<string, unknown> = { is_edited: true }
@@ -422,8 +430,63 @@ export async function updateExpense(
       dbUpdates.tax = Math.round(lines.reduce((s, t) => s + t.amount, 0) * 100) / 100
     }
   }
+  if ('subtotal' in updates) dbUpdates.subtotal = updates.subtotal ?? null
+  if ('discount' in updates) dbUpdates.discount = updates.discount ?? null
+  if ('rounding' in updates) dbUpdates.rounding = updates.rounding ?? null
+
   const { error } = await db.from('expenses').update(dbUpdates).eq('id', id)
   if (error) throw error
+}
+
+type ExpenseItemRow = { name: string; quantity: number; unitPrice: number | null; totalPrice: number | null }
+
+export async function updateExpenseItems(
+  expenseId: string,
+  patch: {
+    toInsert: ExpenseItemRow[]
+    toUpdate: ({ id: string } & ExpenseItemRow)[]
+    toDelete: string[]
+  },
+  meta: { userId: string; workspaceId: string },
+): Promise<void> {
+  const ops: PromiseLike<void>[] = []
+
+  if (patch.toDelete.length > 0) {
+    ops.push(
+      db.from('expense_items').delete().in('id', patch.toDelete)
+        .then(({ error }) => { if (error) throw error }),
+    )
+  }
+
+  for (const item of patch.toUpdate) {
+    ops.push(
+      db.from('expense_items').update({
+        name: item.name,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        total_price: item.totalPrice,
+      }).eq('id', item.id)
+        .then(({ error }) => { if (error) throw error }),
+    )
+  }
+
+  if (patch.toInsert.length > 0) {
+    ops.push(
+      db.from('expense_items').insert(
+        patch.toInsert.map((item) => ({
+          expense_id: expenseId,
+          user_id: meta.userId,
+          workspace_id: meta.workspaceId,
+          name: item.name,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          total_price: item.totalPrice,
+        })),
+      ).then(({ error }) => { if (error) throw error }),
+    )
+  }
+
+  await Promise.all(ops)
 }
 
 export async function updateMileageRate(workspaceId: string, rate: number): Promise<void> {
@@ -486,12 +549,12 @@ export async function fetchReport(id: string): Promise<{ report: Report; expense
   return { report: mapReport(reportRes.data as RawReport, expenses.length, mileage.length), expenses, mileage }
 }
 
-export async function createReport(title: string, workspaceId: string): Promise<Report> {
+export async function createReport(title: string, workspaceId: string, baseCurrency: string): Promise<Report> {
   const { data: { user } } = await supabaseAuth.auth.getUser()
   if (!user) throw new Error('Not authenticated')
   const { data, error } = await db
     .from('reports')
-    .insert({ title, workspace_id: workspaceId, submitted_by: user.id, status: 'draft', total_amount: 0, currency: 'MYR' })
+    .insert({ title, workspace_id: workspaceId, submitted_by: user.id, status: 'draft', total_amount: 0, currency: baseCurrency })
     .select('id, submitted_by, title, status, total_amount, currency, created_at, submitted_at, rejection_note')
     .single()
   if (error) throw error
@@ -583,5 +646,22 @@ export async function deleteMileage(id: string): Promise<void> {
 
 export async function deleteReport(id: string): Promise<void> {
   const { error } = await db.from('reports').delete().eq('id', id).eq('status', 'draft')
+  if (error) throw error
+}
+
+export async function fetchCurrencies(): Promise<Currency[]> {
+  const { data, error } = await db
+    .from('lookup_currencies')
+    .select('code, name, symbol')
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((c) => ({ code: c.code, name: c.name, symbol: c.symbol }))
+}
+
+export async function updateWorkspaceBaseCurrency(workspaceId: string, baseCurrency: string): Promise<void> {
+  const { error } = await db
+    .from('workspaces')
+    .update({ base_currency: baseCurrency })
+    .eq('id', workspaceId)
   if (error) throw error
 }

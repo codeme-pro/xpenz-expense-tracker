@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileText, Plus, X, Check, Loader2, Download, Trash2, MoreVertical } from 'lucide-react'
+import { toast } from 'sonner'
 import { fetchReports, createReport, deleteReport } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
@@ -59,18 +60,23 @@ function ReportsScreen() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => createReport(newTitle.trim(), current.id),
+    mutationFn: () => createReport(newTitle.trim(), current.id, current.baseCurrency),
     onSuccess: (report) => {
       queryClient.invalidateQueries({ queryKey: ['reports'] })
       setCreating(false)
       setNewTitle('')
       navigate({ to: '/reports/$reportId', params: { reportId: report.id } })
     },
+    onError: () => toast.error('Failed to create report. Try again.'),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteReport(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reports'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      toast.success('Report deleted')
+    },
+    onError: () => toast.error('Failed to delete. Try again.'),
   })
 
   const handleFilterChange = (updates: Partial<PersonalFilters>) => {
@@ -119,9 +125,6 @@ function ReportsScreen() {
             autoFocus
             className="w-full text-sm text-text-1 bg-background border border-border rounded-lg px-3 py-2 focus:outline-none focus:border-primary mb-3"
           />
-          {createMutation.isError && (
-            <p className="text-xs text-danger mb-2">Failed to create report. Try again.</p>
-          )}
           <div className="flex gap-2">
             <button
               onClick={() => { setCreating(false); setNewTitle('') }}

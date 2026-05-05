@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Car, Trash2, MoreVertical, X, Check, Loader2, Pencil, ArrowUpDown } from 'lucide-react'
+import { toast } from 'sonner'
 import { fetchMileage, deleteMileage, updateMileage } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
@@ -65,7 +66,11 @@ function MileageScreen() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteMileage(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['mileage'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mileage'] })
+      toast.success('Mileage entry deleted')
+    },
+    onError: () => toast.error('Failed to delete. Try again.'),
   })
 
   const updateMutation = useMutation({
@@ -74,9 +79,10 @@ function MileageScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mileage'] })
       setEditingId(null)
-      // update action sheet from/to if open
       setActionSheet((s) => s ? { ...s, view: 'actions' } : null)
+      toast.success('Route saved')
     },
+    onError: () => toast.error('Failed to save. Try again.'),
   })
 
   const handleFilterChange = (updates: Partial<PersonalFilters>) => {
@@ -179,6 +185,12 @@ function MileageScreen() {
                   <StatusBadge status={entry.status} />
                   <span className="text-xs text-text-2">·</span>
                   <span className="text-xs text-text-2">{formatDate(entry.createdAt)}</span>
+                  {entry.transportMode && (
+                    <>
+                      <span className="text-xs text-text-2">·</span>
+                      <span className="text-xs text-text-2">{entry.transportMode}</span>
+                    </>
+                  )}
                   <span className="flex-1" />
                   <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
                   <span className="text-xs text-text-2 mx-1">·</span>
@@ -264,17 +276,16 @@ function MileageScreen() {
                                   Cancel
                                 </button>
                               </div>
-                              {updateMutation.isError && (
-                                <p className="text-xs text-danger">Failed to save.</p>
-                              )}
                             </div>
                           ) : (
                             <div className="group/trip flex items-start gap-2">
                               <div className="min-w-0">
                                 <p className="text-xs text-text-2 truncate max-w-[180px]">↑ {entry.fromLocation ?? '—'}</p>
                                 <p className="text-sm font-medium text-text-1 truncate max-w-[180px] mt-0.5">↓ {entry.toLocation ?? '—'}</p>
-                                {entry.purpose && (
-                                  <p className="text-xs text-text-2 mt-0.5 truncate max-w-[180px]">{entry.purpose}</p>
+                                {(entry.purpose || entry.transportMode) && (
+                                  <p className="text-xs text-text-2 mt-0.5 truncate max-w-[180px]">
+                                    {[entry.transportMode, entry.purpose].filter(Boolean).join(' · ')}
+                                  </p>
                                 )}
                               </div>
                               {entry.status === 'draft' && (
@@ -434,9 +445,6 @@ function MileageScreen() {
                         className="w-full h-10 px-3 text-sm bg-background border border-border rounded-xl text-text-1 placeholder:text-text-2 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
                       />
                     </div>
-                    {updateMutation.isError && (
-                      <p className="text-xs text-danger px-1">Failed to save. Try again.</p>
-                    )}
                   </div>
                   <div className="flex flex-col gap-2 mt-4">
                     <button

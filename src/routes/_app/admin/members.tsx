@@ -5,15 +5,17 @@ import { TopBar } from '#/components/TopBar'
 import { Avatar } from '#/components/Avatar'
 import { fetchWorkspaceMembers } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
+import { useWorkspace } from '#/context/WorkspaceContext'
 
 export const Route = createFileRoute('/_app/admin/members')({
   component: MembersScreen,
 })
 
 function MembersScreen() {
+  const { current } = useWorkspace()
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
 
   return (
@@ -35,7 +37,7 @@ function MembersScreen() {
             </div>
             <div className="text-right shrink-0">
               <p className="text-sm font-semibold text-text-1 tabular-nums">
-                {formatCurrency(member.totalExpenses)}
+                {formatCurrency(member.totalExpenses, current.baseCurrency)}
               </p>
               {member.pendingExpenses > 0 && (
                 <p className="text-xs text-blue-600">{member.pendingExpenses} pending</p>

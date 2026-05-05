@@ -8,6 +8,7 @@ import { EmptyState } from '#/components/EmptyState'
 import { WorkspaceFilterBar } from '#/components/WorkspaceFilterBar'
 import { formatCurrency, formatDate } from '#/lib/format'
 import type { ExpenseStatus, WorkspaceFilters, WorkspacePeriod } from '#/lib/types'
+import { useWorkspace } from '#/context/WorkspaceContext'
 
 export const Route = createFileRoute('/_app/workspace/reports')({
   validateSearch: (search: Record<string, unknown>): WorkspaceFilters => ({
@@ -30,6 +31,7 @@ export const Route = createFileRoute('/_app/workspace/reports')({
 function WorkspaceReportsScreen() {
   const filters = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
+  const { current } = useWorkspace()
 
   const { data: reports = [], isLoading } = useQuery({
     queryKey: queryKeys.workspaceReports(filters),
@@ -37,8 +39,8 @@ function WorkspaceReportsScreen() {
   })
 
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
 
   const handleFilterChange = (updates: Partial<WorkspaceFilters>) => {

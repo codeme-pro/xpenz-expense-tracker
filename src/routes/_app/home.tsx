@@ -1,13 +1,15 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Receipt, FileText, CheckCircle, TrendingUp, Loader2, X, AlertCircle, Bell } from 'lucide-react'
+import { useEffect, useMemo, useRef } from 'react'
+import { Receipt, FileText, CheckCircle, TrendingUp, Bell } from 'lucide-react'
+import { toast } from 'sonner'
 import { fetchExpenses, fetchReports, fetchInbox } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
 import { formatCurrency } from '#/lib/format'
 import { supabaseAuth } from '#/lib/supabase'
+import { useAuth } from '#/context/AuthContext'
 import type { Expense } from '#/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -18,6 +20,8 @@ export const Route = createFileRoute('/_app/home')({
 function HomeScreen() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const reportingCurrency = user?.reportingCurrency ?? 'MYR'
 
   const { data: expenses = [] } = useQuery({
     queryKey: queryKeys.expenses(),
@@ -34,10 +38,10 @@ function HomeScreen() {
   })
   const unreadCount = inbox.filter((i) => !i.read).length
 
-  // ── Scan processing banner ───────────────────────────────────────────────
-  const [scanState, setScanState] = useState<'idle' | 'processing' | 'failed'>('idle')
+  // ── Scan processing toast ────────────────────────────────────────────────
   const channelRef = useRef<RealtimeChannel | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const SCAN_TOAST = 'scan-processing'
 
   useEffect(() => {
     const setup = async () => {
@@ -45,7 +49,6 @@ function HomeScreen() {
       if (!session) return
       const userId = session.user.id
 
-      // Check for any scans still in flight (within last 10 min)
       const { data: pending } = await supabaseAuth
         .from('scans')
         .select('id')
@@ -54,9 +57,9 @@ function HomeScreen() {
         .gte('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
 
       if (pending?.length) {
-        setScanState('processing')
+        toast.loading('Scanning receipt with AI…', { id: SCAN_TOAST })
         timeoutRef.current = setTimeout(() => {
-          setScanState('failed')
+          toast.error('Scan timed out. Try again from the scan screen.', { id: SCAN_TOAST })
         }, 45000)
       }
 
@@ -68,17 +71,22 @@ function HomeScreen() {
           (payload) => {
             const scan = payload.new as { status: string }
             if (scan.status === 'processing' || scan.status === 'uploaded') {
-              setScanState('processing')
               clearTimeout(timeoutRef.current!)
-              timeoutRef.current = setTimeout(() => setScanState('failed'), 45000)
+              toast.loading('Scanning receipt with AI…', { id: SCAN_TOAST })
+              timeoutRef.current = setTimeout(() => {
+                toast.error('Scan timed out. Try again from the scan screen.', { id: SCAN_TOAST })
+              }, 45000)
             } else if (scan.status === 'parsed') {
               clearTimeout(timeoutRef.current!)
-              setScanState('idle')
+              toast.success('Receipt scanned successfully', { id: SCAN_TOAST })
               queryClient.invalidateQueries({ queryKey: queryKeys.expenses() })
               queryClient.invalidateQueries({ queryKey: queryKeys.mileage() })
             } else if (scan.status === 'failed') {
               clearTimeout(timeoutRef.current!)
-              setScanState('failed')
+              toast.error('Scan failed. Try again from the scan screen.', { id: SCAN_TOAST })
+            } else if (scan.status === 'unknown') {
+              clearTimeout(timeoutRef.current!)
+              toast.error('Not a receipt or map image. Please scan a valid receipt.', { id: SCAN_TOAST })
             }
           },
         )
@@ -97,38 +105,20 @@ function HomeScreen() {
     const currentMonth = new Date().toISOString().slice(0, 7)
     let totalThisMonth = 0, pendingCount = 0, approvedCount = 0, draftCount = 0
     for (const e of expenses) {
-      if ((e.date ?? e.createdAt).startsWith(currentMonth)) totalThisMonth += e.amount
+      if (e.createdAt.startsWith(currentMonth)) {
+        const converted = e.reportingAmounts?.[reportingCurrency] ?? e.reportingAmount ?? null
+        if (converted !== null) totalThisMonth += converted
+      }
       if (e.status === 'submitted') pendingCount++
       else if (e.status === 'approved') approvedCount++
       else if (e.status === 'draft') draftCount++
     }
     return { totalThisMonth, pendingCount, approvedCount, draftCount }
-  }, [expenses])
+  }, [expenses, reportingCurrency])
 
   return (
     <div>
       <TopBar title="Home" workspaceTitle />
-
-      {scanState === 'processing' && (
-        <div className="mx-4 mt-3 flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-primary/10 border border-primary/20 text-primary animate-fade-in-up">
-          <Loader2 size={14} className="animate-spin shrink-0" />
-          <p className="text-xs font-medium flex-1">Scanning receipt with AI…</p>
-        </div>
-      )}
-
-      {scanState === 'failed' && (
-        <div className="mx-4 mt-3 flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-danger/10 border border-danger/20 text-danger animate-fade-in-up">
-          <AlertCircle size={14} className="shrink-0" />
-          <p className="text-xs font-medium flex-1">Scan failed. Try again from the scan screen.</p>
-          <button
-            onClick={() => setScanState('idle')}
-            className="shrink-0 hover:opacity-70 transition-opacity cursor-pointer"
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
 
       <div className="px-4 py-4 space-y-5">
         <div className="flex items-start justify-between">
@@ -154,8 +144,8 @@ function HomeScreen() {
 
         <div className="grid grid-cols-2 gap-3">
           <StatCard
-            label="This Month"
-            value={formatCurrency(totalThisMonth)}
+            label="Total Monthly"
+            value={formatCurrency(totalThisMonth, reportingCurrency)}
             icon={<TrendingUp size={16} />}
             colorClass="text-primary bg-primary/10"
           />

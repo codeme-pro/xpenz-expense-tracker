@@ -2,8 +2,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Building2, Users, Shield, CreditCard, Zap, Receipt, Navigation, Pencil, Check, X, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useWorkspace } from '#/context/WorkspaceContext'
-import { useAuth } from '#/context/AuthContext'
 import { updateMileageRate, updateWorkspacePlan } from '#/lib/queries'
 
 export const Route = createFileRoute('/_app/workspace/settings')({
@@ -12,8 +12,7 @@ export const Route = createFileRoute('/_app/workspace/settings')({
 
 function WorkspaceSettingsScreen() {
   const { current, refreshWorkspace } = useWorkspace()
-  const { role } = useAuth()
-  const canEditPolicies = role === 'owner' || role === 'admin'
+  const canEditPolicies = current.role === 'owner' || current.role === 'admin'
   const [editingRate, setEditingRate] = useState(false)
   const [rateInput, setRateInput] = useState('')
 
@@ -22,12 +21,18 @@ function WorkspaceSettingsScreen() {
     onSuccess: async () => {
       await refreshWorkspace()
       setEditingRate(false)
+      toast.success('Mileage rate updated')
     },
+    onError: () => toast.error('Failed to save. Try again.'),
   })
 
   const planMutation = useMutation({
     mutationFn: (plan: 'free' | 'premium') => updateWorkspacePlan(current.id, plan),
-    onSuccess: async () => { await refreshWorkspace() },
+    onSuccess: async (_, plan) => {
+      await refreshWorkspace()
+      toast.success(plan === 'premium' ? 'Premium activated' : 'Premium cancelled')
+    },
+    onError: () => toast.error('Failed to update plan. Try again.'),
   })
 
   const startEditRate = () => {
@@ -177,9 +182,6 @@ function WorkspaceSettingsScreen() {
                 )}
               </div>
             )}
-            {planMutation.isError && (
-              <p className="mt-2 text-xs text-danger">Failed to update plan. Try again.</p>
-            )}
           </div>
         </div>
 
@@ -198,7 +200,7 @@ function WorkspaceSettingsScreen() {
               {editingRate ? (
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1 bg-background border border-border rounded-lg overflow-hidden">
-                    <span className="pl-2 text-xs text-text-2 select-none">MYR</span>
+                    <span className="pl-2 text-xs text-text-2 select-none">{current.baseCurrency}</span>
                     <input
                       type="number"
                       min="0"
@@ -230,7 +232,7 @@ function WorkspaceSettingsScreen() {
               ) : (
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-text-2">
-                    MYR {current.mileageRate.toFixed(2)} / km
+                    {current.baseCurrency} {current.mileageRate.toFixed(2)} / km
                   </span>
                   {canEditPolicies && (
                     <button
@@ -244,9 +246,6 @@ function WorkspaceSettingsScreen() {
                 </div>
               )}
             </div>
-            {rateMutation.isError && (
-              <p className="px-4 py-2 text-xs text-danger">Failed to save. Try again.</p>
-            )}
           </div>
         </div>
 

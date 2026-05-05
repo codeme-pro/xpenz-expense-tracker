@@ -65,8 +65,8 @@ function WorkspaceExpensesScreen() {
   })
 
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
 
   const handleFilterChange = (updates: Partial<WorkspaceFilters>) => {

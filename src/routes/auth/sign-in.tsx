@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { supabaseAuth } from '#/lib/supabase'
+import { supabaseAuth, db } from '#/lib/supabase'
 
 export const Route = createFileRoute('/auth/sign-in')({
   component: SignIn,
@@ -34,17 +34,30 @@ function SignIn() {
       return
     }
     setLoading(true)
-    const { error } = await supabaseAuth.auth.signInWithPassword({
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
       email: fields.email,
       password: fields.password,
     })
-    setLoading(false)
     if (error) {
+      setLoading(false)
       const isNetwork = error.message.toLowerCase().includes('fetch') || error.message.toLowerCase().includes('network')
       setErrors({ email: isNetwork ? 'Network error — check your connection' : 'Incorrect email or password' })
       return
     }
-    await navigate({ to: '/home' })
+    const userId = data.user?.id
+    if (!userId) {
+      setLoading(false)
+      await navigate({ to: '/home' })
+      return
+    }
+    const { count } = await db
+      .from('workspace_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+    setLoading(false)
+    if (!count) await navigate({ to: '/auth/onboarding' })
+    else if (count === 1) await navigate({ to: '/home' })
+    else await navigate({ to: '/workspaces' })
   }
 
   return (

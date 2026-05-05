@@ -46,7 +46,6 @@ function AppLayoutWrapper() {
 }
 
 function AppLayout() {
-  const { role } = useAuth()
   const { activePanel } = usePanel()
   const { current, loading: workspaceLoading } = useWorkspace()
   if (workspaceLoading) return <div className="min-h-dvh bg-background" />
@@ -55,16 +54,16 @@ function AppLayout() {
   return (
     <div className="min-h-dvh bg-background lg:flex">
       <div className="hidden lg:block">
-        {role && <Sidebar role={role} />}
+        <Sidebar role={current.role} />
       </div>
       <main className="flex-1 pb-[68px] lg:pb-0 lg:ml-56">
-        <div className="lg:hidden">
-          <TrialBanner variant="inline" />
-        </div>
         <Outlet />
       </main>
       <div className="lg:hidden">
-        {role && <BottomNav />}
+        <TrialBanner variant="floating" />
+      </div>
+      <div className="lg:hidden">
+        <BottomNav />
       </div>
 
       {activePanel === 'scan' && <ScanPanel />}

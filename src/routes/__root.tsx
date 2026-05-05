@@ -1,4 +1,5 @@
 import { Outlet, createRootRoute } from '@tanstack/react-router'
+import { Toaster } from 'sonner'
 import { AuthProvider } from '#/context/AuthContext'
 import { ThemeProvider } from '#/context/ThemeContext'
 import '../styles.css'
@@ -12,6 +13,7 @@ function RootComponent() {
     <ThemeProvider>
       <AuthProvider>
         <Outlet />
+        <Toaster position="bottom-center" offset={88} richColors closeButton />
       </AuthProvider>
     </ThemeProvider>
   )

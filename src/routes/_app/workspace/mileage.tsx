@@ -8,6 +8,7 @@ import { EmptyState } from '#/components/EmptyState'
 import { WorkspaceFilterBar } from '#/components/WorkspaceFilterBar'
 import { formatCurrency, formatDate } from '#/lib/format'
 import type { ExpenseStatus, WorkspaceFilters, WorkspacePeriod } from '#/lib/types'
+import { useWorkspace } from '#/context/WorkspaceContext'
 
 export const Route = createFileRoute('/_app/workspace/mileage')({
   validateSearch: (search: Record<string, unknown>): WorkspaceFilters => ({
@@ -29,6 +30,7 @@ export const Route = createFileRoute('/_app/workspace/mileage')({
 function WorkspaceMileageScreen() {
   const filters = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
+  const { current } = useWorkspace()
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: queryKeys.workspaceMileage(filters),
@@ -36,8 +38,8 @@ function WorkspaceMileageScreen() {
   })
 
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
 
   const handleFilterChange = (updates: Partial<WorkspaceFilters>) => {

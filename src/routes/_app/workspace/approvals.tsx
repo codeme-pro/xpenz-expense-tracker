@@ -8,6 +8,7 @@ import { EmptyState } from '#/components/EmptyState'
 import { WorkspaceFilterBar } from '#/components/WorkspaceFilterBar'
 import { formatCurrency, formatDate } from '#/lib/format'
 import type { WorkspaceFilters } from '#/lib/types'
+import { useWorkspace } from '#/context/WorkspaceContext'
 
 export const Route = createFileRoute('/_app/workspace/approvals')({
   validateSearch: (search: Record<string, unknown>): WorkspaceFilters => ({
@@ -20,6 +21,7 @@ export const Route = createFileRoute('/_app/workspace/approvals')({
 
 function WorkspaceApprovalsScreen() {
   const navigate = useNavigate({ from: Route.fullPath })
+  const { current } = useWorkspace()
 
   const { data: reports = [], isLoading } = useQuery({
     queryKey: queryKeys.workspaceReports({ status: 'submitted' }),
@@ -27,8 +29,8 @@ function WorkspaceApprovalsScreen() {
   })
 
   const { data: members = [] } = useQuery({
-    queryKey: queryKeys.workspaceMembers(),
-    queryFn: fetchWorkspaceMembers,
+    queryKey: queryKeys.workspaceMembers(current.baseCurrency),
+    queryFn: () => fetchWorkspaceMembers(current.baseCurrency),
   })
 
   const handleFilterChange = (updates: Partial<WorkspaceFilters>) => {

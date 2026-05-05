@@ -64,10 +64,11 @@ interface ParsedMileage {
   source: "google_maps" | "unknown";
   from_location: string | null;
   to_location: string | null;
+  transport_mode: string;
 }
 
 interface ParsedResult {
-  type: "expense" | "mileage";
+  type: "expense" | "mileage" | "unknown";
   expense: ParsedExpense | null;
   mileage: ParsedMileage | null;
 }
@@ -79,10 +80,15 @@ async function ocrAndParse(
   imageBase64: string,
   mimeType: string,
   categories: { id: string; name: string }[],
+  transportModes: { id: string; name: string; slug: string }[],
   currencyHint: string | null,
 ): Promise<{ markdown: string; parsed: ParsedResult }> {
   const categoryList = categories
     .map((c) => `- "${c.id}" → ${c.name}`)
+    .join("\n");
+
+  const transportModeList = transportModes
+    .map((t) => `- "${t.id}" → ${t.name} (slug: ${t.slug})`)
     .join("\n");
 
   const currencyHintText = currencyHint ?? "unknown";
@@ -104,7 +110,7 @@ async function ocrAndParse(
           properties: {
             type: {
               type: "string",
-              enum: ["expense", "mileage"],
+              enum: ["expense", "mileage", "unknown"],
             },
             expense: {
               type: ["object", "null"],
@@ -201,7 +207,7 @@ async function ocrAndParse(
             },
             mileage: {
               type: ["object", "null"],
-              required: ["distance", "unit", "duration", "estimated_amount", "source", "from_location", "to_location"],
+              required: ["distance", "unit", "duration", "estimated_amount", "source", "from_location", "to_location", "transport_mode"],
               properties: {
                 distance: { type: "number" },
                 unit: { type: "string", enum: ["km", "mi"] },
@@ -210,6 +216,10 @@ async function ocrAndParse(
                 source: { type: "string", enum: ["google_maps", "unknown"] },
                 from_location: { type: ["string", "null"] },
                 to_location: { type: ["string", "null"] },
+                transport_mode: {
+                  type: "string",
+                  description: "UUID from the transport mode list",
+                },
               },
             },
           },
@@ -233,6 +243,10 @@ Return "type" as:
   - map screenshot (e.g. Google Maps)
   - contains distance (km/mi), duration, route
 
+- "unknown":
+  - not a receipt and not a map/distance image
+  - selfie, landscape photo, screenshot of unrelated app, blank/unreadable image
+
 ---
 
 --- TYPE-SPECIFIC OUTPUT RULES ---
@@ -248,6 +262,10 @@ If type = "mileage":
 - Set "expense" = null
 - DO NOT perform authenticity analysis
 - DO NOT create receipt-related fields
+
+If type = "unknown":
+- Set both "expense" = null and "mileage" = null
+- No further extraction needed
 
 Never mix both types.
 Never hallucinate missing structures.
@@ -389,6 +407,22 @@ Extract:
 
 ---
 
+--- TRANSPORT MODE RULES (MILEAGE ONLY) ---
+
+Assign transport_mode using ONLY these exact UUID values:
+${transportModeList}
+
+Determine mode from visual cues in the map screenshot:
+- Route shown as car/road navigation → Driving
+- Route shown as motorcycle path → Motorcycle
+- Route shown with bus/train/transit icons or public transport steps → Public Transit
+- Route shown as walking path (pedestrian icon, walking distance) → Walking
+- Cannot determine from image → Unknown
+
+Always output the UUID string, never the name or slug.
+
+---
+
 Ensure output strictly follows the schema. Never populate both expense and mileage.`,
   });
 
@@ -430,15 +464,61 @@ async function fetchExchangeRate(
   from: string,
   to: string,
   date: string,
-): Promise<number | null> {
+): Promise<{ rate: number; today: boolean } | null> {
+  const fromL = from.toLowerCase();
+  const toL = to.toLowerCase();
+
+  // 1. Frankfurter historical
   try {
     const res = await fetch(`https://api.frankfurter.dev/v1/${date}?from=${from}&to=${to}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return (data.rates?.[to] as number) ?? null;
-  } catch {
-    return null;
+    if (res.ok) {
+      const data = await res.json();
+      const rate = data.rates?.[to] as number | undefined;
+      if (rate) return { rate, today: false };
+    }
+  } catch { /* continue */ }
+
+  // 2. fawazahmed0 historical (200+ currencies incl. VND, from ~Jun 2024)
+  for (const url of [
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${fromL}.json`,
+    `https://${date}.currency-api.pages.dev/v1/currencies/${fromL}.json`,
+  ]) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const rate = data[fromL]?.[toL] as number | undefined;
+        if (rate) return { rate, today: false };
+      }
+    } catch { /* continue */ }
   }
+
+  // 3. Frankfurter today
+  try {
+    const res = await fetch(`https://api.frankfurter.dev/v1/latest?from=${from}&to=${to}`);
+    if (res.ok) {
+      const data = await res.json();
+      const rate = data.rates?.[to] as number | undefined;
+      if (rate) return { rate, today: true };
+    }
+  } catch { /* continue */ }
+
+  // 4. fawazahmed0 latest (200+ currencies incl. VND — today's rate for any pair)
+  for (const url of [
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${fromL}.json`,
+    `https://latest.currency-api.pages.dev/v1/currencies/${fromL}.json`,
+  ]) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const rate = data[fromL]?.[toL] as number | undefined;
+        if (rate) return { rate, today: true };
+      }
+    } catch { /* continue */ }
+  }
+
+  return null;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -506,12 +586,16 @@ Deno.serve(async (req: Request) => {
     const imageBase64 = arrayBufferToBase64(fileBuffer);
     const mimeType = fileData.type || "image/jpeg";
 
-    // ─── 5. Fetch categories ───────────────────────────────────────────────
-    const { data: categories, error: catError } = await supabaseAdmin
-      .from("lookup_categories")
-      .select("id, name");
+    // ─── 5. Fetch lookup tables ────────────────────────────────────────────
+    const [catRes, transportRes, currencyRes] = await Promise.all([
+      supabaseAdmin.from("lookup_categories").select("id, name"),
+      supabaseAdmin.from("lookup_transport_mode").select("id, name, slug"),
+      supabaseAdmin.from("lookup_currencies").select("code"),
+    ]);
 
-    if (catError) throw new Error(`[categories] ${catError.message}`);
+    if (catRes.error) throw new Error(`[categories] ${catRes.error.message}`);
+    if (transportRes.error) throw new Error(`[transport_modes] ${transportRes.error.message}`);
+    const supportedCurrencies: string[] = (currencyRes.data ?? []).map((c) => c.code);
 
     // ─── 6. OCR + Parse ────────────────────────────────────────────────────
     const mistral = new Mistral({ apiKey: Deno.env.get("MISTRAL_API_KEY")! });
@@ -520,7 +604,10 @@ Deno.serve(async (req: Request) => {
     let parsed: ParsedResult;
     try {
       ({ markdown, parsed } = await ocrAndParse(
-        mistral, imageBase64, mimeType, categories ?? [], currency_hint ?? null,
+        mistral, imageBase64, mimeType,
+        catRes.data ?? [],
+        transportRes.data ?? [],
+        currency_hint ?? null,
       ));
     } catch (err) {
       throw new Error(`[ocr] ${(err as Error).message}`);
@@ -531,6 +618,16 @@ Deno.serve(async (req: Request) => {
       .from("scans")
       .update({ ocr_text: markdown, raw_json: parsed })
       .eq("id", scan_id);
+
+    // ─── Unknown type path ─────────────────────────────────────────────────
+    if (parsed.type === "unknown") {
+      await supabaseAdmin
+        .from("scans")
+        .update({ status: "unknown" })
+        .eq("id", scan_id);
+
+      return json({ success: true, type: "unknown" });
+    }
 
     // ─── Expense path ──────────────────────────────────────────────────────
     if (parsed.type === "expense" && parsed.expense) {
@@ -553,29 +650,63 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Exchange rate logic
-      let reportingAmount: number | null = null;
-      let exchangeRate: number | null = null;
+      // Exchange rate logic — fan-out to all supported currencies
+      const scanDate = scan.created_at
+        ? new Date(scan.created_at).toISOString().split("T")[0]
+        : null;
+      const dateToUse = exp.transaction.date ?? scanDate;
+
+      const reportingAmounts: Record<string, number> = {};
+      const exchangeRatesMap: Record<string, number> = {};
       let exchangeRateDate: string | null = null;
       let exchangeRateSource: string | null = null;
 
-      if (exp.currency === reportingCurrency) {
-        reportingAmount = exp.totals.grand_total;
-      } else {
-        const scanDate = scan.created_at
-          ? new Date(scan.created_at).toISOString().split("T")[0]
-          : null;
-        const dateToUse = exp.transaction.date ?? scanDate;
+      if (dateToUse) {
+        const rateResults = await Promise.allSettled(
+          supportedCurrencies.map(async (code) => {
+            if (code === exp.currency) {
+              return { code, rate: 1, amount: exp.totals.grand_total, today: false };
+            }
+            const result = await fetchExchangeRate(exp.currency, code, dateToUse);
+            if (!result) return null;
+            return {
+              code,
+              rate: result.rate,
+              amount: Math.round(exp.totals.grand_total * result.rate * 100) / 100,
+              today: result.today,
+            };
+          })
+        );
 
-        if (dateToUse) {
-          exchangeRateDate = dateToUse;
-          exchangeRateSource = exp.transaction.date ? "receipt_date" : "scan_date";
-          exchangeRate = await fetchExchangeRate(exp.currency, reportingCurrency, dateToUse);
-          if (exchangeRate !== null) {
-            reportingAmount = Math.round(exp.totals.grand_total * exchangeRate * 100) / 100;
+        for (const r of rateResults) {
+          if (r.status === "fulfilled" && r.value) {
+            reportingAmounts[r.value.code] = r.value.amount;
+            exchangeRatesMap[r.value.code] = r.value.rate;
           }
         }
+
+        // Legacy date/source from reporting currency conversion
+        const legacyEntry = rateResults.find(
+          (r) => r.status === "fulfilled" && (r as PromiseFulfilledResult<{ code: string; today: boolean } | null>).value?.code === reportingCurrency
+        ) as PromiseFulfilledResult<{ code: string; rate: number; amount: number; today: boolean } | null> | undefined;
+
+        if (legacyEntry?.value) {
+          if (legacyEntry.value.today) {
+            exchangeRateDate = new Date().toISOString().split("T")[0];
+            exchangeRateSource = "approx. today";
+          } else {
+            exchangeRateDate = dateToUse;
+            exchangeRateSource = exp.transaction.date ? "receipt_date" : "scan_date";
+          }
+        }
+      } else {
+        reportingAmounts[exp.currency] = exp.totals.grand_total;
+        exchangeRatesMap[exp.currency] = 1;
       }
+
+      // Legacy scalar fields (backward compat)
+      const reportingAmount = reportingAmounts[reportingCurrency] ?? null;
+      const exchangeRate = exchangeRatesMap[reportingCurrency] ?? null;
 
       // ─── 8. Insert expense ───────────────────────────────────────────────
       const { data: expense, error: expenseError } = await supabaseAdmin
@@ -602,11 +733,12 @@ Deno.serve(async (req: Request) => {
           currency_source: exp.currency_source,
           reporting_currency: reportingCurrency,
           reporting_amount: reportingAmount,
+          reporting_amounts: Object.keys(reportingAmounts).length ? reportingAmounts : null,
           exchange_rate: exchangeRate,
+          exchange_rates: Object.keys(exchangeRatesMap).length ? exchangeRatesMap : null,
           exchange_rate_date: exchangeRateDate,
           exchange_rate_source: exchangeRateSource,
           date: exp.transaction.date,
-          raw_json: parsed,
           needs_review: exp.authenticity.verdict !== "likely_authentic",
           confirmed: false,
           authenticity_score: exp.authenticity.ai_generated_probability,
@@ -655,16 +787,20 @@ Deno.serve(async (req: Request) => {
     if (parsed.type === "mileage" && parsed.mileage) {
       const mil = parsed.mileage;
 
-      // Fetch workspace mileage rate (fall back to 0.80 if workspace not found)
+      // Fetch workspace mileage rate + base currency
       let ratePerKm = 0.80;
+      let workspaceBaseCurrency = "MYR";
       if (scan.workspace_id) {
         const { data: wsData } = await supabaseAdmin
           .from("workspaces")
-          .select("mileage_rate_per_km")
+          .select("mileage_rate_per_km, base_currency")
           .eq("id", scan.workspace_id)
           .single();
         if (wsData?.mileage_rate_per_km != null) {
           ratePerKm = Number(wsData.mileage_rate_per_km);
+        }
+        if (wsData?.base_currency) {
+          workspaceBaseCurrency = wsData.base_currency;
         }
       }
 
@@ -685,6 +821,8 @@ Deno.serve(async (req: Request) => {
           estimated_amount: mil.estimated_amount,
           rate_per_km: ratePerKm,
           amount,
+          currency: workspaceBaseCurrency,
+          transport_mode: mil.transport_mode ?? null,
           status: "draft",
         })
         .select()
