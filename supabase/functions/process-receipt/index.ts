@@ -27,6 +27,7 @@ interface ExpenseItem {
 }
 
 interface ParsedExpense {
+  expense_category_id: string | null;
   merchant: {
     name: string;
     address: string | null;
@@ -80,12 +81,12 @@ async function ocrAndParse(
   client: Mistral,
   imageBase64: string,
   mimeType: string,
-  categories: { id: string; name: string }[],
+  categories: { id: string; name: string; description: string | null; group_name: string | null }[],
   transportModes: { id: string; name: string; slug: string }[],
   currencyHint: string | null,
 ): Promise<{ markdown: string; parsed: ParsedResult }> {
   const categoryList = categories
-    .map((c) => `- "${c.id}" → ${c.name}`)
+    .map((c) => `- "${c.id}" → ${c.name}${c.description ? `: ${c.description}` : ""}`)
     .join("\n");
 
   const transportModeList = transportModes
@@ -116,10 +117,14 @@ async function ocrAndParse(
             expense: {
               type: ["object", "null"],
               required: [
-                "merchant", "transaction", "items", "totals",
+                "expense_category_id", "merchant", "transaction", "items", "totals",
                 "currency", "currency_source", "authenticity",
               ],
               properties: {
+                expense_category_id: {
+                  type: ["string", "null"],
+                  description: "UUID of the single best-fit category for the whole expense",
+                },
                 merchant: {
                   type: "object",
                   required: ["name", "address", "phone"],
@@ -279,6 +284,42 @@ Assign category_id to each line item using ONLY these exact values:
 ${categoryList}
 
 If no match → use the "Others" category_id.
+
+---
+
+--- EXPENSE CATEGORY RULES ---
+
+Assign expense_category_id: the single UUID that best describes the entire expense.
+
+Base the decision on the merchant name, merchant type, and the most representative item(s).
+Use ONLY the exact UUID values listed above.
+
+Examples:
+- Restaurant or café receipt → "Business Meals (Internal)" or "Business Meals (Client)"
+- Grab, Uber, taxi, train ticket → "Ground Transportation"
+- Hotel, resort, Airbnb → "Hotel/Lodging"
+- Petrol station, fuel receipt → "Fuel"
+- Flight, airline → "Airfare"
+- Parking, toll, highway → "Parking & Tolls"
+- Software invoice (Slack, Zoom, Adobe, etc.) → "Software/SaaS"
+- Hardware store, electronics → "Hardware"
+- Office stationery, supplies shop → "Office Supplies"
+- Telco bill, internet invoice → "Telecommunications"
+- Courier, postage, freight → "Postage & Shipping"
+- Conference registration → "Conferences & Events"
+- Course, certification fee → "Training & Certifications"
+- Professional association → "Memberships"
+- Bookshop, online learning → "Books & Resources"
+- Ad platform invoice (Google, Meta) → "Marketing/Advertising"
+- Lawyer, accountant, consultant → "Legal & Professional"
+- Coworking space, office rent → "Rent"
+- Recruitment platform → "Recruiting"
+- Insurance premium → "Business Insurance"
+- Bank fees → "Bank Charges"
+- Gift shop, corporate gift → "Gifts"
+
+If uncertain → use "Others" UUID.
+Set expense_category_id = null only if type is not "expense".
 
 ---
 
@@ -528,7 +569,7 @@ Deno.serve(async (req: Request) => {
 
     // ─── 5. Fetch lookup tables ────────────────────────────────────────────
     const [catRes, transportRes, currencyRes] = await Promise.all([
-      supabaseAdmin.from("lookup_categories").select("id, name"),
+      supabaseAdmin.from("lookup_categories").select("id, name, description, group_name").order("sort_order"),
       supabaseAdmin.from("lookup_transport_mode").select("id, name, slug"),
       supabaseAdmin.from("lookup_currencies").select("code"),
     ]);
@@ -650,6 +691,7 @@ Deno.serve(async (req: Request) => {
           authenticity_verdict: exp.authenticity.verdict,
           flags: exp.authenticity.flags,
           status: "draft",
+          category_id: exp.expense_category_id ?? null,
         })
         .select()
         .single();

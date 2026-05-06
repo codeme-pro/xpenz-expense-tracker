@@ -42,6 +42,7 @@ export const Route = createFileRoute('/_app/expenses/')({
       ? (search.period as WorkspacePeriod)
       : 'all_time',
     search: typeof search.search === 'string' ? search.search : undefined,
+    categoryId: typeof search.categoryId === 'string' ? search.categoryId : undefined,
   }),
   component: ExpensesScreen,
 })

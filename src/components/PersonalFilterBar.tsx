@@ -1,6 +1,8 @@
 import { Search, SlidersHorizontal } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ExpenseStatus, PersonalFilters, WorkspacePeriod } from '#/lib/types'
+import { useQuery } from '@tanstack/react-query'
+import { fetchCategories } from '#/lib/queries'
+import type { Category, ExpenseStatus, PersonalFilters, WorkspacePeriod } from '#/lib/types'
 
 const PERIOD_OPTIONS: { value: WorkspacePeriod; label: string }[] = [
   { value: 'all_time', label: 'All time' },
@@ -28,6 +30,13 @@ export function PersonalFilterBar({ filters, onFilterChange, showSearch = false 
   const [searchInput, setSearchInput] = useState(filters.search ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
+  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
+    if (!acc[cat.groupName]) acc[cat.groupName] = []
+    acc[cat.groupName].push(cat)
+    return acc
+  }, {})
+
   useEffect(() => {
     setSearchInput(filters.search ?? '')
   }, [filters.search])
@@ -45,10 +54,10 @@ export function PersonalFilterBar({ filters, onFilterChange, showSearch = false 
 
   const activePeriod = filters.period ?? 'all_time'
   const activeStatus = filters.status ?? ''
-  const secondaryCount = (filters.status ? 1 : 0) + (filters.search ? 1 : 0)
+  const secondaryCount = (filters.status ? 1 : 0) + (filters.search ? 1 : 0) + (filters.categoryId ? 1 : 0)
 
   function clearSecondary() {
-    onFilterChange({ status: undefined, search: undefined })
+    onFilterChange({ status: undefined, search: undefined, categoryId: undefined })
     setSearchInput('')
   }
 
@@ -122,6 +131,24 @@ export function PersonalFilterBar({ filters, onFilterChange, showSearch = false 
                 </button>
               ))}
             </div>
+          </div>
+
+          <div>
+            <span className="text-xs font-medium text-text-2 block mb-2">Category</span>
+            <select
+              value={filters.categoryId ?? ''}
+              onChange={(e) => onFilterChange({ categoryId: e.target.value || undefined })}
+              className="w-full h-8 px-2 text-xs border border-border rounded-lg bg-surface text-text-1 focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">All categories</option>
+              {Object.entries(categoryGroups).map(([group, cats]) => (
+                <optgroup key={group} label={group}>
+                  {cats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </div>
 
           {showSearch && (

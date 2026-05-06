@@ -1,9 +1,9 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useRef } from 'react'
 import { X, ImageOff, ChevronDown, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { fetchCurrencies, fetchExpense, fetchScanSignedUrl, updateExpense, updateExpenseItems } from '#/lib/queries'
+import { fetchCategories, fetchCurrencies, fetchExpense, fetchScanSignedUrl, updateExpense, updateExpenseItems, deleteExpense } from '#/lib/queries'
 import { supabaseAuth } from '#/lib/supabase'
 import { queryKeys } from '#/lib/queryKeys'
 import { formatCurrency, formatDate } from '#/lib/format'
@@ -11,7 +11,7 @@ import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { useAuth } from '#/context/AuthContext'
-import type { Expense } from '#/lib/types'
+import type { Category, Expense } from '#/lib/types'
 
 export const Route = createFileRoute('/_app/expenses/$expenseId')({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -168,6 +168,7 @@ type EditValues = {
   notes: string
   amount: string
   currency: string
+  categoryId: string
   receiptNumber: string
   paymentMethod: string
   subtotal: string
@@ -496,13 +497,15 @@ function ExpenseDetail() {
   const { user } = useAuth()
   const role = current.role
 
+  const navigate = useNavigate()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [itemsOpen, setItemsOpen] = useState(false)
   const [breakdownOpen, setBreakdownOpen] = useState(true)
   const [editingField, setEditingField] = useState<string | null>(null)
   const [editValues, setEditValues] = useState<EditValues>({
-    merchant: '', date: '', notes: '', amount: '', currency: '', receiptNumber: '', paymentMethod: '',
+    merchant: '', date: '', notes: '', amount: '', currency: '', categoryId: '', receiptNumber: '', paymentMethod: '',
     subtotal: '', discount: '', rounding: '',
   })
   const [editTaxLines, setEditTaxLines] = useState<TaxLine[]>([])
@@ -515,6 +518,7 @@ function ExpenseDetail() {
   })
 
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
+  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
 
   const { data: receiptUrl } = useQuery({
     queryKey: queryKeys.scanUrl(expense?.scanFilePath ?? ''),
@@ -563,6 +567,16 @@ function ExpenseDetail() {
     onError: () => toast.error('Failed to save items. Try again.'),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteExpense(expenseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      toast.success('Expense deleted')
+      navigate({ to: '/expenses' })
+    },
+    onError: () => toast.error('Failed to delete. Try again.'),
+  })
+
   const activateField = (field: string, overrides?: Partial<EditValues>) => {
     if (!expense) return
     if (field === 'breakdown') {
@@ -572,6 +586,7 @@ function ExpenseDetail() {
         notes: expense.notes ?? '',
         amount: expense.amount.toFixed(2),
         currency: expense.currency,
+        categoryId: expense.categoryId ?? '',
         receiptNumber: expense.receiptNumber ?? '',
         paymentMethod: expense.paymentMethod ?? '',
         subtotal: expense.subtotal != null ? expense.subtotal.toFixed(2) : '',
@@ -596,6 +611,7 @@ function ExpenseDetail() {
         notes: expense.notes ?? '',
         amount: expense.amount.toFixed(2),
         currency: expense.currency,
+        categoryId: expense.categoryId ?? '',
         receiptNumber: expense.receiptNumber ?? '',
         paymentMethod: expense.paymentMethod ?? '',
         subtotal: expense.subtotal != null ? expense.subtotal.toFixed(2) : '',
@@ -677,6 +693,9 @@ function ExpenseDetail() {
     } else if (field === 'paymentMethod') {
       const v = editValues.paymentMethod.trim() || null
       if (v !== expense.paymentMethod) updates.paymentMethod = v
+    } else if (field === 'categoryId') {
+      const v = editValues.categoryId || null
+      if (v !== expense.categoryId) updates.categoryId = v
     } else if (field === 'breakdown') {
       const subtotal = editValues.subtotal !== '' ? Math.round(parseFloat(editValues.subtotal) * 100) / 100 : null
       const discount = editValues.discount !== '' ? Math.round(parseFloat(editValues.discount) * 100) / 100 : null
@@ -808,6 +827,12 @@ function ExpenseDetail() {
     </button>
   )
 
+  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
+    if (!acc[cat.groupName]) acc[cat.groupName] = []
+    acc[cat.groupName].push(cat)
+    return acc
+  }, {})
+
   const detailRows = (
     <div className="divide-y divide-border">
       <InlineFieldRow
@@ -905,7 +930,27 @@ function ExpenseDetail() {
         <input type="text" value={editValues.paymentMethod} onChange={set('paymentMethod')} autoFocus className={inputCls} />
       </InlineFieldRow>
 
-      {expense.category && <DetailRow label="Category" value={expense.category} />}
+      <InlineFieldRow
+        label="Category"
+        displayValue={expense.category ?? '—'}
+        isActive={editingField === 'categoryId'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('categoryId')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <select value={editValues.categoryId} onChange={set('categoryId')} autoFocus className={inputCls}>
+          <option value="">— No category —</option>
+          {Object.entries(categoryGroups).map(([group, cats]) => (
+            <optgroup key={group} label={group}>
+              {cats.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </InlineFieldRow>
       {expense.currencySource && (
         <DetailRow
           label="Currency source"
@@ -1102,6 +1147,40 @@ function ExpenseDetail() {
           </div>
           {breakdownOpen && breakdownContent}
         </div>
+
+        {/* Delete */}
+        {canEdit && (
+          <div className="pt-1 pb-6">
+            {!confirmingDelete ? (
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                className="w-full h-11 rounded-xl border border-danger/40 text-danger text-sm font-medium hover:bg-danger/5 transition-colors duration-150 cursor-pointer"
+              >
+                Delete expense
+              </button>
+            ) : (
+              <div className="bg-surface rounded-xl border border-danger/30 overflow-hidden">
+                <p className="text-xs text-text-2 px-4 pt-3 pb-2">This cannot be undone.</p>
+                <div className="flex gap-2 px-3 pb-3">
+                  <button
+                    onClick={() => deleteMutation.mutate()}
+                    disabled={deleteMutation.isPending}
+                    className="flex-1 h-10 flex items-center justify-center gap-1.5 rounded-lg bg-danger text-white text-sm font-semibold disabled:opacity-50 transition-opacity duration-150 cursor-pointer"
+                  >
+                    {deleteMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmingDelete(false)}
+                    className="flex-1 h-10 rounded-lg border border-border text-text-2 text-sm hover:bg-background transition-colors duration-150 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── DESKTOP layout ── */}
@@ -1158,12 +1237,45 @@ function ExpenseDetail() {
             )}
 
             {/* Totals breakdown */}
-            <div>
+            <div className={canEdit ? 'border-b border-border' : ''}>
               <div className={`bg-background/40 ${breakdownOpen ? 'border-b border-border' : ''}`}>
                 {breakdownHeader}
               </div>
               {breakdownOpen && breakdownContent}
             </div>
+
+            {/* Delete */}
+            {canEdit && (
+              <div className="px-6 py-4">
+                {!confirmingDelete ? (
+                  <button
+                    onClick={() => setConfirmingDelete(true)}
+                    className="flex items-center gap-1.5 text-xs text-danger/50 hover:text-danger transition-colors duration-150 cursor-pointer"
+                  >
+                    <Trash2 size={12} />
+                    Delete expense
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-text-2">This cannot be undone.</span>
+                    <button
+                      onClick={() => deleteMutation.mutate()}
+                      disabled={deleteMutation.isPending}
+                      className="h-7 px-3 flex items-center gap-1.5 text-xs font-semibold text-white bg-danger rounded-lg disabled:opacity-50 cursor-pointer transition-opacity duration-150"
+                    >
+                      {deleteMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : null}
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => setConfirmingDelete(false)}
+                      className="h-7 px-3 text-xs text-text-2 border border-border rounded-lg hover:bg-background transition-colors duration-150 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right: Image card (sticky) */}

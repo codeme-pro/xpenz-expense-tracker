@@ -1,6 +1,8 @@
 import { Search } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ExpenseStatus, WorkspaceFilters, WorkspaceMember, WorkspacePeriod } from '#/lib/types'
+import { useQuery } from '@tanstack/react-query'
+import { fetchCategories } from '#/lib/queries'
+import type { Category, ExpenseStatus, WorkspaceFilters, WorkspaceMember, WorkspacePeriod } from '#/lib/types'
 
 const PERIOD_OPTIONS: { value: WorkspacePeriod; label: string }[] = [
   { value: 'all_time', label: 'All time' },
@@ -35,6 +37,13 @@ export function WorkspaceFilterBar({
 }: WorkspaceFilterBarProps) {
   const [searchInput, setSearchInput] = useState(filters.search ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
+  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
+    if (!acc[cat.groupName]) acc[cat.groupName] = []
+    acc[cat.groupName].push(cat)
+    return acc
+  }, {})
 
   useEffect(() => {
     setSearchInput(filters.search ?? '')
@@ -91,6 +100,21 @@ export function WorkspaceFilterBar({
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
+        ))}
+      </select>
+
+      <select
+        value={filters.categoryId ?? ''}
+        onChange={(e) => onFilterChange({ categoryId: e.target.value || undefined })}
+        className={selectClass}
+      >
+        <option value="">All categories</option>
+        {Object.entries(categoryGroups).map(([group, cats]) => (
+          <optgroup key={group} label={group}>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </optgroup>
         ))}
       </select>
 

@@ -1,5 +1,5 @@
 import { db, supabaseAuth } from './supabase'
-import type { Currency, Expense, ExpenseItem, ExpenseStatus, InboxItem, MileageEntry, PersonalFilters, Report, UserRole, WorkspaceMember, WorkspaceFilters, WorkspacePeriod } from './types'
+import type { Category, Currency, Expense, ExpenseItem, ExpenseStatus, InboxItem, MileageEntry, PersonalFilters, Report, UserRole, WorkspaceMember, WorkspaceFilters, WorkspacePeriod } from './types'
 
 type RawItem = {
   id: string
@@ -34,7 +34,11 @@ function mapExpense(row: RawExpense): Expense {
     reportingAmount: row.reporting_amount as number | null,
     reportingAmounts: (row.reporting_amounts as Record<string, number> | null) ?? null,
     currencySource: row.currency_source as string | null,
-    category: items[0]?.categoryName ?? null,
+    categoryId: (row.category_id as string | null) ?? null,
+    category:
+      (row.lookup_categories as { name: string } | null)?.name ??
+      items[0]?.categoryName ??
+      null,
     status: row.status as ExpenseStatus,
     date: row.date as string | null,
     notes: row.notes as string | null,
@@ -71,6 +75,7 @@ const EXPENSE_SELECT = `
   subtotal, tax, tax_breakdown, discount, rounding, computed_grand_total,
   exchange_rate, exchange_rate_date, exchange_rate_source,
   receipt_number, payment_method, is_edited,
+  category_id, lookup_categories!category_id ( name ),
   scans!scan_id ( file_path ),
   reports!report_id ( id, title ),
   expense_items (
@@ -89,6 +94,7 @@ export async function fetchExpenses(filters?: PersonalFilters): Promise<Expense[
   let query = db.from('expenses').select(EXPENSE_SELECT).order('created_at', { ascending: false })
   if (filters?.status) query = query.eq('status', filters.status)
   if (filters?.search) query = query.ilike('merchant', `%${filters.search}%`)
+  if (filters?.categoryId) query = query.eq('category_id', filters.categoryId)
   const { from, to } = getDateRange(filters?.period)
   if (from) query = query.gte('created_at', from)
   if (to) query = query.lt('created_at', to)
@@ -244,6 +250,7 @@ const APPROVAL_SELECT = `
   id, user_id, merchant, amount, currency, date, status, notes,
   report_id, scan_id, reporting_currency, reporting_amount, reporting_amounts, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
+  category_id, lookup_categories!category_id ( name ),
   scans!scan_id ( file_path ),
   reports!report_id ( id, title ),
   expense_items (
@@ -268,6 +275,7 @@ export async function fetchWorkspaceExpenses(filters?: WorkspaceFilters): Promis
   if (filters?.memberId) query = query.eq('user_id', filters.memberId)
   if (filters?.status) query = query.eq('status', filters.status)
   if (filters?.search) query = query.ilike('merchant', `%${filters.search}%`)
+  if (filters?.categoryId) query = query.eq('category_id', filters.categoryId)
   const { from, to } = getDateRange(filters?.period)
   if (from) query = query.gte('created_at', from)
   if (to) query = query.lt('created_at', to)
@@ -407,6 +415,7 @@ export async function updateExpense(
     notes?: string | null
     amount?: number
     currency?: string
+    categoryId?: string | null
     receiptNumber?: string | null
     paymentMethod?: string | null
     taxBreakdown?: { label: string; amount: number }[] | null
@@ -421,6 +430,7 @@ export async function updateExpense(
   if ('notes' in updates) dbUpdates.notes = updates.notes ?? null
   if (updates.amount !== undefined) dbUpdates.amount = updates.amount
   if (updates.currency !== undefined) dbUpdates.currency = updates.currency
+  if ('categoryId' in updates) dbUpdates.category_id = updates.categoryId ?? null
   if ('receiptNumber' in updates) dbUpdates.receipt_number = updates.receiptNumber ?? null
   if ('paymentMethod' in updates) dbUpdates.payment_method = updates.paymentMethod ?? null
   if ('taxBreakdown' in updates) {
@@ -666,12 +676,28 @@ export async function updateWorkspaceBaseCurrency(workspaceId: string, baseCurre
   if (error) throw error
 }
 
+export async function fetchCategories(): Promise<Category[]> {
+  const { data, error } = await db
+    .from('lookup_categories')
+    .select('id, name, group_name, description, sort_order')
+    .order('sort_order')
+  if (error) throw error
+  return (data ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    groupName: c.group_name,
+    description: c.description,
+    sortOrder: c.sort_order,
+  }))
+}
+
 export async function createExpense(data: {
   merchant: string
   amount: number
   currency: string
   date: string | null
   notes: string | null
+  categoryId?: string | null
   paymentMethod: string | null
   workspaceId: string
   userId: string
@@ -684,6 +710,7 @@ export async function createExpense(data: {
       currency: data.currency,
       date: data.date,
       notes: data.notes,
+      category_id: data.categoryId ?? null,
       payment_method: data.paymentMethod,
       workspace_id: data.workspaceId,
       user_id: data.userId,

@@ -6,7 +6,8 @@ import { toast } from 'sonner'
 import { usePanel } from '#/context/PanelContext'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { useAuth } from '#/context/AuthContext'
-import { fetchCurrencies, createExpense } from '#/lib/queries'
+import { fetchCategories, fetchCurrencies, createExpense } from '#/lib/queries'
+import type { Category } from '#/lib/types'
 
 const inputCls = 'w-full h-10 px-3 text-sm border border-border rounded-xl bg-background text-text-1 focus:outline-none focus:ring-2 focus:ring-primary'
 
@@ -22,11 +23,19 @@ export function AddExpensePanel() {
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState(current.baseCurrency)
   const [date, setDate] = useState(today)
+  const [categoryId, setCategoryId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('')
   const [notes, setNotes] = useState('')
   const [errors, setErrors] = useState<{ merchant?: string; amount?: string; currency?: string }>({})
 
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
+  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
+
+  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
+    if (!acc[cat.groupName]) acc[cat.groupName] = []
+    acc[cat.groupName].push(cat)
+    return acc
+  }, {})
 
   const create = useMutation({
     mutationFn: () => createExpense({
@@ -35,6 +44,7 @@ export function AddExpensePanel() {
       currency,
       date: date || null,
       notes: notes.trim() || null,
+      categoryId: categoryId || null,
       paymentMethod: paymentMethod.trim() || null,
       workspaceId: current.id,
       userId: user!.id,
@@ -140,6 +150,24 @@ export function AddExpensePanel() {
               onChange={(e) => setDate(e.target.value)}
               className={inputCls}
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-text-1 mb-1">Category</label>
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">— No category —</option>
+              {Object.entries(categoryGroups).map(([group, cats]) => (
+                <optgroup key={group} label={group}>
+                  {cats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </div>
 
           <div>

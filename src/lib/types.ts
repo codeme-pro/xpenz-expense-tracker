@@ -47,7 +47,8 @@ export interface Expense {
   reportingAmount: number | null
   reportingAmounts: Record<string, number> | null
   currencySource: string | null
-  category: string | null // human-readable category name
+  categoryId: string | null
+  category: string | null // human-readable category name from lookup_categories
   status: ExpenseStatus
   date: string | null
   notes: string | null
@@ -116,6 +117,14 @@ export interface MileageEntry {
   transportMode: string | null
 }
 
+export interface Category {
+  id: string
+  name: string
+  groupName: string
+  description: string | null
+  sortOrder: number
+}
+
 export type WorkspacePeriod = 'all_time' | 'this_month' | 'last_month' | 'last_3_months'
 
 export interface WorkspaceFilters {
@@ -123,12 +132,14 @@ export interface WorkspaceFilters {
   status?: ExpenseStatus
   period?: WorkspacePeriod
   search?: string
+  categoryId?: string
 }
 
 export interface PersonalFilters {
   status?: ExpenseStatus
   period?: WorkspacePeriod
   search?: string
+  categoryId?: string
 }
 
 export interface WorkspaceMember {
