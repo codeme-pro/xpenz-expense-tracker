@@ -39,6 +39,7 @@ import { Route as AppWorkspaceMembersRouteImport } from './routes/_app/workspace
 import { Route as AppWorkspaceExpensesRouteImport } from './routes/_app/workspace/expenses'
 import { Route as AppWorkspaceApprovalsRouteImport } from './routes/_app/workspace/approvals'
 import { Route as AppReportsReportIdRouteImport } from './routes/_app/reports/$reportId'
+import { Route as AppExpensesNewRouteImport } from './routes/_app/expenses/new'
 import { Route as AppExpensesExpenseIdRouteImport } from './routes/_app/expenses/$expenseId'
 import { Route as AppAdminMembersRouteImport } from './routes/_app/admin/members'
 import { Route as AppAdminApprovalRouteImport } from './routes/_app/admin/approval'
@@ -192,6 +193,11 @@ const AppReportsReportIdRoute = AppReportsReportIdRouteImport.update({
   path: '/reports/$reportId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppExpensesNewRoute = AppExpensesNewRouteImport.update({
+  id: '/expenses/new',
+  path: '/expenses/new',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppExpensesExpenseIdRoute = AppExpensesExpenseIdRouteImport.update({
   id: '/expenses/$expenseId',
   path: '/expenses/$expenseId',
@@ -230,6 +236,7 @@ export interface FileRoutesByFullPath {
   '/admin/approval': typeof AppAdminApprovalRoute
   '/admin/members': typeof AppAdminMembersRoute
   '/expenses/$expenseId': typeof AppExpensesExpenseIdRoute
+  '/expenses/new': typeof AppExpensesNewRoute
   '/reports/$reportId': typeof AppReportsReportIdRoute
   '/workspace/approvals': typeof AppWorkspaceApprovalsRoute
   '/workspace/expenses': typeof AppWorkspaceExpensesRoute
@@ -263,6 +270,7 @@ export interface FileRoutesByTo {
   '/admin/approval': typeof AppAdminApprovalRoute
   '/admin/members': typeof AppAdminMembersRoute
   '/expenses/$expenseId': typeof AppExpensesExpenseIdRoute
+  '/expenses/new': typeof AppExpensesNewRoute
   '/reports/$reportId': typeof AppReportsReportIdRoute
   '/workspace/approvals': typeof AppWorkspaceApprovalsRoute
   '/workspace/expenses': typeof AppWorkspaceExpensesRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   '/_app/admin/approval': typeof AppAdminApprovalRoute
   '/_app/admin/members': typeof AppAdminMembersRoute
   '/_app/expenses/$expenseId': typeof AppExpensesExpenseIdRoute
+  '/_app/expenses/new': typeof AppExpensesNewRoute
   '/_app/reports/$reportId': typeof AppReportsReportIdRoute
   '/_app/workspace/approvals': typeof AppWorkspaceApprovalsRoute
   '/_app/workspace/expenses': typeof AppWorkspaceExpensesRoute
@@ -335,6 +344,7 @@ export interface FileRouteTypes {
     | '/admin/approval'
     | '/admin/members'
     | '/expenses/$expenseId'
+    | '/expenses/new'
     | '/reports/$reportId'
     | '/workspace/approvals'
     | '/workspace/expenses'
@@ -368,6 +378,7 @@ export interface FileRouteTypes {
     | '/admin/approval'
     | '/admin/members'
     | '/expenses/$expenseId'
+    | '/expenses/new'
     | '/reports/$reportId'
     | '/workspace/approvals'
     | '/workspace/expenses'
@@ -403,6 +414,7 @@ export interface FileRouteTypes {
     | '/_app/admin/approval'
     | '/_app/admin/members'
     | '/_app/expenses/$expenseId'
+    | '/_app/expenses/new'
     | '/_app/reports/$reportId'
     | '/_app/workspace/approvals'
     | '/_app/workspace/expenses'
@@ -637,6 +649,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppReportsReportIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/expenses/new': {
+      id: '/_app/expenses/new'
+      path: '/expenses/new'
+      fullPath: '/expenses/new'
+      preLoaderRoute: typeof AppExpensesNewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/expenses/$expenseId': {
       id: '/_app/expenses/$expenseId'
       path: '/expenses/$expenseId'
@@ -695,6 +714,7 @@ interface AppRouteChildren {
   AppAdminApprovalRoute: typeof AppAdminApprovalRoute
   AppAdminMembersRoute: typeof AppAdminMembersRoute
   AppExpensesExpenseIdRoute: typeof AppExpensesExpenseIdRoute
+  AppExpensesNewRoute: typeof AppExpensesNewRoute
   AppReportsReportIdRoute: typeof AppReportsReportIdRoute
   AppExpensesIndexRoute: typeof AppExpensesIndexRoute
   AppMileageIndexRoute: typeof AppMileageIndexRoute
@@ -711,6 +731,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAdminApprovalRoute: AppAdminApprovalRoute,
   AppAdminMembersRoute: AppAdminMembersRoute,
   AppExpensesExpenseIdRoute: AppExpensesExpenseIdRoute,
+  AppExpensesNewRoute: AppExpensesNewRoute,
   AppReportsReportIdRoute: AppReportsReportIdRoute,
   AppExpensesIndexRoute: AppExpensesIndexRoute,
   AppMileageIndexRoute: AppMileageIndexRoute,

@@ -8,6 +8,7 @@ export function getWorkspaceTabs(role: UserRole | null) {
           { to: '/workspace/approvals', label: 'Approvals' },
           { to: '/workspace/expenses', label: 'Expenses' },
           { to: '/workspace/mileage', label: 'Mileage' },
+          { to: '/workspace/reports', label: 'Reports' },
         ]
       : []),
     ...(role === 'owner' ? [{ to: '/workspace/settings', label: 'Settings' }] : []),

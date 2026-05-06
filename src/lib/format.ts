@@ -1,6 +1,6 @@
 import type { ExpenseCategory, ExpenseStatus } from './types'
 
-export function formatCurrency(amount: number, currency = 'MYR'): string {
+export function formatCurrency(amount: number, currency: string): string {
   return new Intl.NumberFormat('en-MY', {
     style: 'currency',
     currency,

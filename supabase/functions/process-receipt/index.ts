@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.51.0";
 import { Mistral } from "npm:@mistralai/mistralai";
+import { buildReportingAmounts } from "../_shared/exchange-rates.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -460,67 +461,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-async function fetchExchangeRate(
-  from: string,
-  to: string,
-  date: string,
-): Promise<{ rate: number; today: boolean } | null> {
-  const fromL = from.toLowerCase();
-  const toL = to.toLowerCase();
-
-  // 1. Frankfurter historical
-  try {
-    const res = await fetch(`https://api.frankfurter.dev/v1/${date}?from=${from}&to=${to}`);
-    if (res.ok) {
-      const data = await res.json();
-      const rate = data.rates?.[to] as number | undefined;
-      if (rate) return { rate, today: false };
-    }
-  } catch { /* continue */ }
-
-  // 2. fawazahmed0 historical (200+ currencies incl. VND, from ~Jun 2024)
-  for (const url of [
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${fromL}.json`,
-    `https://${date}.currency-api.pages.dev/v1/currencies/${fromL}.json`,
-  ]) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const rate = data[fromL]?.[toL] as number | undefined;
-        if (rate) return { rate, today: false };
-      }
-    } catch { /* continue */ }
-  }
-
-  // 3. Frankfurter today
-  try {
-    const res = await fetch(`https://api.frankfurter.dev/v1/latest?from=${from}&to=${to}`);
-    if (res.ok) {
-      const data = await res.json();
-      const rate = data.rates?.[to] as number | undefined;
-      if (rate) return { rate, today: true };
-    }
-  } catch { /* continue */ }
-
-  // 4. fawazahmed0 latest (200+ currencies incl. VND — today's rate for any pair)
-  for (const url of [
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${fromL}.json`,
-    `https://latest.currency-api.pages.dev/v1/currencies/${fromL}.json`,
-  ]) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const rate = data[fromL]?.[toL] as number | undefined;
-        if (rate) return { rate, today: true };
-      }
-    } catch { /* continue */ }
-  }
-
-  return null;
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -655,58 +595,23 @@ Deno.serve(async (req: Request) => {
         ? new Date(scan.created_at).toISOString().split("T")[0]
         : null;
       const dateToUse = exp.transaction.date ?? scanDate;
+      const dateLabel = exp.transaction.date ? "receipt_date" : "scan_date";
 
-      const reportingAmounts: Record<string, number> = {};
-      const exchangeRatesMap: Record<string, number> = {};
-      let exchangeRateDate: string | null = null;
-      let exchangeRateSource: string | null = null;
-
-      if (dateToUse) {
-        const rateResults = await Promise.allSettled(
-          supportedCurrencies.map(async (code) => {
-            if (code === exp.currency) {
-              return { code, rate: 1, amount: exp.totals.grand_total, today: false };
-            }
-            const result = await fetchExchangeRate(exp.currency, code, dateToUse);
-            if (!result) return null;
-            return {
-              code,
-              rate: result.rate,
-              amount: Math.round(exp.totals.grand_total * result.rate * 100) / 100,
-              today: result.today,
-            };
-          })
-        );
-
-        for (const r of rateResults) {
-          if (r.status === "fulfilled" && r.value) {
-            reportingAmounts[r.value.code] = r.value.amount;
-            exchangeRatesMap[r.value.code] = r.value.rate;
-          }
-        }
-
-        // Legacy date/source from reporting currency conversion
-        const legacyEntry = rateResults.find(
-          (r) => r.status === "fulfilled" && (r as PromiseFulfilledResult<{ code: string; today: boolean } | null>).value?.code === reportingCurrency
-        ) as PromiseFulfilledResult<{ code: string; rate: number; amount: number; today: boolean } | null> | undefined;
-
-        if (legacyEntry?.value) {
-          if (legacyEntry.value.today) {
-            exchangeRateDate = new Date().toISOString().split("T")[0];
-            exchangeRateSource = "approx. today";
-          } else {
-            exchangeRateDate = dateToUse;
-            exchangeRateSource = exp.transaction.date ? "receipt_date" : "scan_date";
-          }
-        }
-      } else {
-        reportingAmounts[exp.currency] = exp.totals.grand_total;
-        exchangeRatesMap[exp.currency] = 1;
-      }
-
-      // Legacy scalar fields (backward compat)
-      const reportingAmount = reportingAmounts[reportingCurrency] ?? null;
-      const exchangeRate = exchangeRatesMap[reportingCurrency] ?? null;
+      const {
+        reportingAmounts,
+        exchangeRatesMap,
+        reportingAmount,
+        exchangeRate,
+        exchangeRateDate,
+        exchangeRateSource,
+      } = await buildReportingAmounts(
+        exp.totals.grand_total,
+        exp.currency,
+        dateToUse,
+        supportedCurrencies,
+        reportingCurrency,
+        dateLabel,
+      );
 
       // ─── 8. Insert expense ───────────────────────────────────────────────
       const { data: expense, error: expenseError } = await supabaseAdmin
@@ -789,7 +694,7 @@ Deno.serve(async (req: Request) => {
 
       // Fetch workspace mileage rate + base currency
       let ratePerKm = 0.80;
-      let workspaceBaseCurrency = "MYR";
+      let workspaceBaseCurrency: string | null = null;
       if (scan.workspace_id) {
         const { data: wsData } = await supabaseAdmin
           .from("workspaces")
@@ -802,6 +707,9 @@ Deno.serve(async (req: Request) => {
         if (wsData?.base_currency) {
           workspaceBaseCurrency = wsData.base_currency;
         }
+      }
+      if (!workspaceBaseCurrency) {
+        throw new Error("[mileage] workspace base_currency not set — cannot log mileage");
       }
 
       const amount = Math.round(mil.distance * ratePerKm * 100) / 100;

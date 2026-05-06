@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Building2, Users, Shield, CreditCard, Zap, Receipt, Navigation, Pencil, Check, X, Loader2 } from 'lucide-react'
+import { Building2, Users, Shield, CreditCard, Zap, Receipt, Navigation, Pencil, Check, X, Loader2, DollarSign } from 'lucide-react'
 import { toast } from 'sonner'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { updateMileageRate, updateWorkspacePlan } from '#/lib/queries'
@@ -64,6 +64,7 @@ function WorkspaceSettingsScreen() {
           <div className="divide-y divide-border">
             <SettingRow icon={<Building2 size={16} />} label="Name" value={current.name} />
             <SettingRow icon={<Users size={16} />} label="Your role" value="Owner" />
+            <SettingRow icon={<DollarSign size={16} />} label="Base currency" value={current.baseCurrency ?? '—'} />
             <SettingRow
               icon={<Shield size={16} />}
               label="Plan"

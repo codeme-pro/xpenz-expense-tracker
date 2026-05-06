@@ -88,7 +88,7 @@ function WorkspaceMileageScreen() {
                   <div className="shrink-0 text-right">
                     <p className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</p>
                     <p className="text-sm font-semibold text-text-1 tabular-nums">
-                      {formatCurrency(entry.amount)}
+                      {formatCurrency(entry.amount, current.baseCurrency)}
                     </p>
                   </div>
                 </div>
@@ -164,7 +164,7 @@ function WorkspaceMileageScreen() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-sm font-semibold text-text-1 tabular-nums">
-                          {formatCurrency(entry.amount)}
+                          {formatCurrency(entry.amount, current.baseCurrency)}
                         </span>
                       </td>
                     </tr>

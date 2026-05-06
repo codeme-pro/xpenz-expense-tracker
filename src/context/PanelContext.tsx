@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 
-type PanelId = 'scan' | 'workspace-switcher'
+type PanelId = 'scan' | 'workspace-switcher' | 'add-expense'
 
 interface PanelContextValue {
   activePanel: PanelId | null

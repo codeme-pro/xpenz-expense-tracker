@@ -1,9 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
-import { X, ImageOff, ChevronDown, Pencil, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2 } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { X, ImageOff, ChevronDown, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchCurrencies, fetchExpense, fetchScanSignedUrl, updateExpense, updateExpenseItems } from '#/lib/queries'
+import { supabaseAuth } from '#/lib/supabase'
 import { queryKeys } from '#/lib/queryKeys'
 import { formatCurrency, formatDate } from '#/lib/format'
 import { TopBar } from '#/components/TopBar'
@@ -77,6 +78,89 @@ function AuthenticityRow({ verdict }: { verdict: string }) {
   )
 }
 
+function InlineFieldRow({
+  label,
+  displayValue,
+  isActive,
+  canEdit,
+  isPending,
+  onActivate,
+  onConfirm,
+  onCancel,
+  children,
+}: {
+  label: string
+  displayValue: string
+  isActive: boolean
+  canEdit: boolean
+  isPending?: boolean
+  onActivate: () => void
+  onConfirm: () => void
+  onCancel: () => void
+  children: React.ReactNode
+}) {
+  if (isActive) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <span className="text-xs text-text-2 shrink-0 w-24">{label}</span>
+        <div className="flex-1 min-w-0">{children}</div>
+        <button
+          onClick={onConfirm}
+          disabled={isPending}
+          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-primary hover:bg-primary/10 transition-colors duration-150 disabled:opacity-50"
+          aria-label="Save"
+        >
+          {isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+        </button>
+        <button
+          onClick={onCancel}
+          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-text-2 hover:bg-nav-hover-bg transition-colors duration-150"
+          aria-label="Cancel"
+        >
+          <X size={13} />
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div
+      onClick={canEdit ? onActivate : undefined}
+      className={`flex justify-between gap-4 px-4 py-3 ${canEdit ? 'cursor-pointer hover:bg-primary/5 active:bg-primary/8 transition-colors duration-100' : ''}`}
+    >
+      <span className="text-xs text-text-2 shrink-0">{label}</span>
+      <span className="text-xs text-text-1 font-medium text-right">{displayValue}</span>
+    </div>
+  )
+}
+
+function SectionConfirmBar({
+  onConfirm,
+  onCancel,
+  isPending,
+}: {
+  onConfirm: () => void
+  onCancel: () => void
+  isPending: boolean
+}) {
+  return (
+    <div className="flex justify-end gap-2 px-4 py-2.5 border-t border-border bg-background/40">
+      <button
+        onClick={onCancel}
+        className="h-7 px-3 text-xs text-text-2 border border-border rounded-lg cursor-pointer hover:bg-nav-hover-bg transition-colors duration-150"
+      >
+        Cancel
+      </button>
+      <button
+        onClick={onConfirm}
+        disabled={isPending}
+        className="h-7 px-3 flex items-center gap-1.5 text-xs font-semibold text-white bg-primary rounded-lg disabled:opacity-50 cursor-pointer transition-opacity duration-150"
+      >
+        {isPending ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+        Save
+      </button>
+    </div>
+  )
+}
 
 type EditValues = {
   merchant: string
@@ -96,21 +180,6 @@ type EditItem = {
   name: string
   quantity: string
   unitPrice: string
-}
-
-function EditRow({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-xs text-text-2 shrink-0 w-24">{label}</span>
-      <div className="flex-1 min-w-0 flex justify-end">{children}</div>
-    </div>
-  )
 }
 
 const inputCls = 'text-xs text-text-1 bg-background border border-border rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-primary w-full'
@@ -167,7 +236,6 @@ function TotalBreakdown({
 
   const nullVal = <span className="text-xs tabular-nums text-text-2/40">—</span>
 
-  // Compute total from stored breakdown/items for view mode (always fresh)
   const viewComputed = !isEditMode ? (() => {
     const sub = expense.subtotal
     const tax = expense.tax ?? 0
@@ -275,7 +343,6 @@ function TotalBreakdown({
     </div>
   )
 
-  // live computed mismatch (edit mode)
   const showComputedMismatch = isEditMode && liveComputed != null && onUseComputed != null
 
   return (
@@ -298,7 +365,6 @@ function TotalBreakdown({
           : nullVal}
       </div>
 
-      {/* Tax (with breakdown) */}
       {taxRow}
 
       {/* Discount */}
@@ -336,7 +402,7 @@ function TotalBreakdown({
           : nullVal}
       </div>
 
-      {/* Computed total row (edit mode: live from inputs; view mode: computed from stored data) */}
+      {/* Computed total row */}
       {(isEditMode ? liveComputed : viewComputed) != null && (
         <div className="flex justify-between items-center gap-4 px-4 py-2.5">
           <span className="text-xs text-text-2/60 italic">Computed total</span>
@@ -434,13 +500,14 @@ function ExpenseDetail() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [itemsOpen, setItemsOpen] = useState(false)
   const [breakdownOpen, setBreakdownOpen] = useState(true)
-  const [isEditMode, setIsEditMode] = useState(false)
+  const [editingField, setEditingField] = useState<string | null>(null)
   const [editValues, setEditValues] = useState<EditValues>({
     merchant: '', date: '', notes: '', amount: '', currency: '', receiptNumber: '', paymentMethod: '',
     subtotal: '', discount: '', rounding: '',
   })
   const [editTaxLines, setEditTaxLines] = useState<TaxLine[]>([])
   const [editItems, setEditItems] = useState<EditItem[]>([])
+  const pendingConversionRef = useRef(false)
 
   const { data: expense, isLoading } = useQuery({
     queryKey: queryKeys.expense(expenseId),
@@ -457,16 +524,38 @@ function ExpenseDetail() {
   })
 
   const saveAll = useMutation({
-    mutationFn: (updates: Parameters<typeof updateExpense>[1]) =>
-      updateExpense(expenseId, updates),
+    mutationFn: (updates: Parameters<typeof updateExpense>[1]) => updateExpense(expenseId, updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
-      setIsEditMode(false)
+      setEditingField(null)
       toast.success('Changes saved')
+      if (pendingConversionRef.current) {
+        pendingConversionRef.current = false
+        triggerConvertExpense()
+      }
     },
     onError: () => toast.error('Failed to save. Try again.'),
   })
+
+  const triggerConvertExpense = async () => {
+    const { data: { session } } = await supabaseAuth.auth.getSession()
+    if (!session) return
+    try {
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/convert-expense`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expense_id: expenseId }),
+      })
+      queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+    } catch {
+      // silent — conversion failure doesn't block the user
+    }
+  }
 
   const saveItems = useMutation({
     mutationFn: (patch: Parameters<typeof updateExpenseItems>[1]) =>
@@ -474,107 +563,144 @@ function ExpenseDetail() {
     onError: () => toast.error('Failed to save items. Try again.'),
   })
 
-  const enterEditMode = (exp: Expense) => {
-    setEditValues({
-      merchant: exp.merchant,
-      date: exp.date ?? '',
-      notes: exp.notes ?? '',
-      amount: exp.amount.toFixed(2),
-      currency: exp.currency,
-      receiptNumber: exp.receiptNumber ?? '',
-      paymentMethod: exp.paymentMethod ?? '',
-      subtotal: exp.subtotal != null ? exp.subtotal.toFixed(2) : '',
-      discount: exp.discount != null ? exp.discount.toFixed(2) : '',
-      rounding: exp.rounding != null ? exp.rounding.toFixed(2) : '',
-    })
-    setEditTaxLines(exp.taxBreakdown ? [...exp.taxBreakdown] : [])
-    setEditItems(exp.items.map((item) => ({
-      id: item.id,
-      name: item.name,
-      quantity: item.quantity.toString(),
-      unitPrice: item.unitPrice != null ? item.unitPrice.toFixed(2) : '',
-    })))
-    setDetailsOpen(true)
-    setItemsOpen(true)
-    setBreakdownOpen(true)
-    setIsEditMode(true)
+  const activateField = (field: string, overrides?: Partial<EditValues>) => {
+    if (!expense) return
+    if (field === 'breakdown') {
+      setEditValues({
+        merchant: expense.merchant,
+        date: expense.date ?? '',
+        notes: expense.notes ?? '',
+        amount: expense.amount.toFixed(2),
+        currency: expense.currency,
+        receiptNumber: expense.receiptNumber ?? '',
+        paymentMethod: expense.paymentMethod ?? '',
+        subtotal: expense.subtotal != null ? expense.subtotal.toFixed(2) : '',
+        discount: expense.discount != null ? expense.discount.toFixed(2) : '',
+        rounding: expense.rounding != null ? expense.rounding.toFixed(2) : '',
+        ...overrides,
+      })
+      setEditTaxLines(expense.taxBreakdown ? [...expense.taxBreakdown] : [])
+      setBreakdownOpen(true)
+    } else if (field === 'lineItems') {
+      setEditItems(expense.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice != null ? item.unitPrice.toFixed(2) : '',
+      })))
+      setItemsOpen(true)
+    } else {
+      setEditValues({
+        merchant: expense.merchant,
+        date: expense.date ?? '',
+        notes: expense.notes ?? '',
+        amount: expense.amount.toFixed(2),
+        currency: expense.currency,
+        receiptNumber: expense.receiptNumber ?? '',
+        paymentMethod: expense.paymentMethod ?? '',
+        subtotal: expense.subtotal != null ? expense.subtotal.toFixed(2) : '',
+        discount: expense.discount != null ? expense.discount.toFixed(2) : '',
+        rounding: expense.rounding != null ? expense.rounding.toFixed(2) : '',
+        ...overrides,
+      })
+      setDetailsOpen(true)
+    }
+    setEditingField(field)
   }
 
-  const handleSaveAll = async (exp: Expense) => {
-    const updates: Parameters<typeof updateExpense>[1] = {}
-    const merchant = editValues.merchant.trim()
-    const date = editValues.date || null
-    const notes = editValues.notes.trim() || null
-    const parsed = parseFloat(editValues.amount)
-    const currency = editValues.currency
-    const receiptNumber = editValues.receiptNumber.trim() || null
-    const paymentMethod = editValues.paymentMethod.trim() || null
-    const subtotal = editValues.subtotal !== '' ? Math.round(parseFloat(editValues.subtotal) * 100) / 100 : null
-    const discount = editValues.discount !== '' ? Math.round(parseFloat(editValues.discount) * 100) / 100 : null
-    const rounding = editValues.rounding !== '' ? Math.round(parseFloat(editValues.rounding) * 100) / 100 : null
+  const cancelEdit = () => setEditingField(null)
 
-    if (merchant !== exp.merchant) updates.merchant = merchant
-    if (date !== exp.date) updates.date = date
-    if (notes !== exp.notes) updates.notes = notes
-    if (!isNaN(parsed) && parsed > 0 && parsed !== exp.amount) updates.amount = Math.round(parsed * 100) / 100
-    if (currency !== exp.currency) updates.currency = currency
-    if (receiptNumber !== exp.receiptNumber) updates.receiptNumber = receiptNumber
-    if (paymentMethod !== exp.paymentMethod) updates.paymentMethod = paymentMethod
-    if (subtotal !== exp.subtotal) updates.subtotal = subtotal
-    if (discount !== exp.discount) updates.discount = discount
-    if (rounding !== exp.rounding) updates.rounding = rounding
+  const handleSaveField = async () => {
+    if (!expense) return
+    const field = editingField
+    if (!field) return
 
-    const origTax = exp.taxBreakdown ?? []
-    const taxChanged =
-      editTaxLines.length !== origTax.length ||
-      editTaxLines.some((l, i) => l.label !== origTax[i]?.label || l.amount !== origTax[i]?.amount)
-    if (taxChanged) updates.taxBreakdown = editTaxLines.length > 0 ? editTaxLines : null
+    if (field === 'lineItems') {
+      const origItems = expense.items
+      const editItemIds = new Set(editItems.filter((i) => i.id !== null).map((i) => i.id as string))
+      const toDelete = origItems.filter((i) => !editItemIds.has(i.id)).map((i) => i.id)
 
-    const origItems = exp.items
-    const editItemIds = new Set(editItems.filter((i) => i.id !== null).map((i) => i.id as string))
-
-    const toDelete = origItems.filter((i) => !editItemIds.has(i.id)).map((i) => i.id)
-
-    const mapRow = (item: EditItem) => {
-      const qty = Math.max(1, parseInt(item.quantity) || 1)
-      const unitPrice = item.unitPrice !== '' ? Math.round(parseFloat(item.unitPrice) * 100) / 100 : null
-      const totalPrice = unitPrice != null ? Math.round(unitPrice * qty * 100) / 100 : null
-      return { name: item.name.trim(), quantity: qty, unitPrice, totalPrice }
-    }
-
-    const toInsert = editItems
-      .filter((item) => item.id === null && item.name.trim())
-      .map(mapRow)
-
-    const toUpdate = editItems
-      .filter((item) => {
-        if (!item.id || !item.name.trim()) return false
-        const orig = origItems.find((o) => o.id === item.id)
-        if (!orig) return false
+      const mapRow = (item: EditItem) => {
         const qty = Math.max(1, parseInt(item.quantity) || 1)
         const unitPrice = item.unitPrice !== '' ? Math.round(parseFloat(item.unitPrice) * 100) / 100 : null
-        return item.name.trim() !== orig.name || qty !== orig.quantity || unitPrice !== orig.unitPrice
-      })
-      .map((item) => ({ id: item.id as string, ...mapRow(item) }))
-
-    const itemPatch = { toInsert, toUpdate, toDelete }
-    const hasPatch = toDelete.length > 0 || toInsert.length > 0 || toUpdate.length > 0
-
-    try {
-      if (hasPatch) await saveItems.mutateAsync(itemPatch)
-      if (Object.keys(updates).length > 0) {
-        await saveAll.mutateAsync(updates)
-        // saveAll.onSuccess handles invalidation + toast + setIsEditMode(false)
-      } else {
-        if (hasPatch) {
-          queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
-          queryClient.invalidateQueries({ queryKey: ['expenses'] })
-          toast.success('Changes saved')
-        }
-        setIsEditMode(false)
+        const totalPrice = unitPrice != null ? Math.round(unitPrice * qty * 100) / 100 : null
+        return { name: item.name.trim(), quantity: qty, unitPrice, totalPrice }
       }
-    } catch {
-      // errors displayed via toast
+
+      const toInsert = editItems
+        .filter((item) => item.id === null && item.name.trim())
+        .map(mapRow)
+
+      const toUpdate = editItems
+        .filter((item) => {
+          if (!item.id || !item.name.trim()) return false
+          const orig = origItems.find((o) => o.id === item.id)
+          if (!orig) return false
+          const qty = Math.max(1, parseInt(item.quantity) || 1)
+          const unitPrice = item.unitPrice !== '' ? Math.round(parseFloat(item.unitPrice) * 100) / 100 : null
+          return item.name.trim() !== orig.name || qty !== orig.quantity || unitPrice !== orig.unitPrice
+        })
+        .map((item) => ({ id: item.id as string, ...mapRow(item) }))
+
+      const hasPatch = toDelete.length > 0 || toInsert.length > 0 || toUpdate.length > 0
+      try {
+        if (hasPatch) await saveItems.mutateAsync({ toInsert, toUpdate, toDelete })
+        queryClient.invalidateQueries({ queryKey: queryKeys.expense(expenseId) })
+        queryClient.invalidateQueries({ queryKey: ['expenses'] })
+        if (hasPatch) toast.success('Changes saved')
+        setEditingField(null)
+      } catch {
+        // toast from mutation
+      }
+      return
+    }
+
+    const updates: Parameters<typeof updateExpense>[1] = {}
+
+    if (field === 'merchant') {
+      const v = editValues.merchant.trim()
+      if (v !== expense.merchant) updates.merchant = v
+    } else if (field === 'amount') {
+      const v = parseFloat(editValues.amount)
+      if (!isNaN(v) && v > 0 && v !== expense.amount) updates.amount = Math.round(v * 100) / 100
+    } else if (field === 'currency') {
+      if (editValues.currency !== expense.currency) updates.currency = editValues.currency
+    } else if (field === 'date') {
+      const v = editValues.date || null
+      if (v !== expense.date) updates.date = v
+    } else if (field === 'notes') {
+      const v = editValues.notes.trim() || null
+      if (v !== expense.notes) updates.notes = v
+    } else if (field === 'receiptNumber') {
+      const v = editValues.receiptNumber.trim() || null
+      if (v !== expense.receiptNumber) updates.receiptNumber = v
+    } else if (field === 'paymentMethod') {
+      const v = editValues.paymentMethod.trim() || null
+      if (v !== expense.paymentMethod) updates.paymentMethod = v
+    } else if (field === 'breakdown') {
+      const subtotal = editValues.subtotal !== '' ? Math.round(parseFloat(editValues.subtotal) * 100) / 100 : null
+      const discount = editValues.discount !== '' ? Math.round(parseFloat(editValues.discount) * 100) / 100 : null
+      const rounding = editValues.rounding !== '' ? Math.round(parseFloat(editValues.rounding) * 100) / 100 : null
+      const amountV = parseFloat(editValues.amount)
+      if (subtotal !== expense.subtotal) updates.subtotal = subtotal
+      if (discount !== expense.discount) updates.discount = discount
+      if (rounding !== expense.rounding) updates.rounding = rounding
+      if (!isNaN(amountV) && amountV > 0 && amountV !== expense.amount) updates.amount = Math.round(amountV * 100) / 100
+
+      const origTax = expense.taxBreakdown ?? []
+      const taxChanged =
+        editTaxLines.length !== origTax.length ||
+        editTaxLines.some((l, i) => l.label !== origTax[i]?.label || l.amount !== origTax[i]?.amount)
+      if (taxChanged) updates.taxBreakdown = editTaxLines.length > 0 ? editTaxLines : null
+    }
+
+    if (Object.keys(updates).length > 0) {
+      if ('amount' in updates || 'currency' in updates) {
+        pendingConversionRef.current = true
+      }
+      saveAll.mutate(updates)
+    } else {
+      setEditingField(null)
     }
   }
 
@@ -590,20 +716,18 @@ function ExpenseDetail() {
 
   const isDraft = expense.status === 'draft'
   const canEdit = isDraft && ctx !== 'workspace' && user?.id === expense.submittedBy
-  const showReporting =
-    expense.reportingCurrency &&
-    expense.reportingCurrency !== expense.currency &&
-    expense.reportingAmount != null
+  const userReportingCurrency = user?.reportingCurrency || current.baseCurrency
+  const convertedForUser = expense.reportingAmounts?.[userReportingCurrency]
+    ?? (expense.reportingCurrency === userReportingCurrency ? expense.reportingAmount : null)
+  const showReporting = convertedForUser != null && userReportingCurrency !== expense.currency
   const isAdminOrOwner = role === 'admin' || role === 'owner'
   const showAuthenticity = current.isPremium && isAdminOrOwner && ctx === 'workspace'
 
-  // live computed total from edit state (for "Use computed" feature)
-  const liveComputed = isEditMode ? (() => {
+  const liveComputed = editingField === 'breakdown' ? (() => {
     const sub = editValues.subtotal !== '' ? parseFloat(editValues.subtotal) : null
     const taxSum = editTaxLines.reduce((s, t) => s + t.amount, 0)
     const disc = editValues.discount !== '' ? parseFloat(editValues.discount) : null
     const round = editValues.rounding !== '' ? parseFloat(editValues.rounding) : null
-    // Fall back to items sum when no subtotal
     const itemsSum = editItems.some((i) => i.unitPrice !== '')
       ? editItems.reduce((s, item) => {
           const qty = Math.max(1, parseInt(item.quantity) || 1)
@@ -616,15 +740,18 @@ function ExpenseDetail() {
   })() : null
 
   const handleUseComputed = () => {
-    if (liveComputed != null) {
-      setEditValues((v) => ({ ...v, amount: liveComputed.toFixed(2) }))
-    }
+    if (liveComputed != null) setEditValues((v) => ({ ...v, amount: liveComputed.toFixed(2) }))
   }
 
   const handleUseStoredComputed = () => {
     if (!expense.computedGrandTotal) return
-    enterEditMode({ ...expense, amount: expense.computedGrandTotal })
+    activateField('breakdown', { amount: expense.computedGrandTotal.toFixed(2) })
   }
+
+  const set = (k: keyof EditValues) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setEditValues((v) => ({ ...v, [k]: e.target.value }))
+
+  const isPending = saveAll.isPending || saveItems.isPending
 
   const receiptThumb = receiptUrl ? (
     <button
@@ -662,7 +789,7 @@ function ExpenseDetail() {
     </button>
   )
 
-  const itemCount = isEditMode ? editItems.length : expense.items.length
+  const itemCount = editingField === 'lineItems' ? editItems.length : expense.items.length
   const lineItemsHeader = (
     <button
       onClick={() => setItemsOpen((v) => !v)}
@@ -681,8 +808,118 @@ function ExpenseDetail() {
     </button>
   )
 
+  const detailRows = (
+    <div className="divide-y divide-border">
+      <InlineFieldRow
+        label="Amount"
+        displayValue={formatCurrency(expense.amount, expense.currency)}
+        isActive={editingField === 'amount'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('amount')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <input type="number" step="0.01" min="0" value={editValues.amount} onChange={set('amount')} autoFocus className={inputCls + ' text-right'} />
+      </InlineFieldRow>
+
+      <InlineFieldRow
+        label="Currency"
+        displayValue={expense.currency}
+        isActive={editingField === 'currency'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('currency')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <select value={editValues.currency} onChange={set('currency')} autoFocus className={inputCls}>
+          {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+        </select>
+      </InlineFieldRow>
+
+      <InlineFieldRow
+        label="Merchant"
+        displayValue={expense.merchant}
+        isActive={editingField === 'merchant'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('merchant')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <input type="text" value={editValues.merchant} onChange={set('merchant')} autoFocus className={inputCls} />
+      </InlineFieldRow>
+
+      <InlineFieldRow
+        label="Date"
+        displayValue={formatDate(expense.date ?? expense.createdAt)}
+        isActive={editingField === 'date'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('date')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <input type="date" value={editValues.date} onChange={set('date')} autoFocus className={inputCls} />
+      </InlineFieldRow>
+
+      {(canEdit || expense.notes) && (
+        <InlineFieldRow
+          label="Notes"
+          displayValue={expense.notes || '—'}
+          isActive={editingField === 'notes'}
+          canEdit={canEdit}
+          isPending={isPending}
+          onActivate={() => activateField('notes')}
+          onConfirm={handleSaveField}
+          onCancel={cancelEdit}
+        >
+          <textarea value={editValues.notes} onChange={set('notes')} rows={3} autoFocus className={inputCls + ' resize-none'} />
+        </InlineFieldRow>
+      )}
+
+      <InlineFieldRow
+        label="Receipt no."
+        displayValue={expense.receiptNumber ?? '—'}
+        isActive={editingField === 'receiptNumber'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('receiptNumber')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <input type="text" value={editValues.receiptNumber} onChange={set('receiptNumber')} autoFocus className={inputCls} />
+      </InlineFieldRow>
+
+      <InlineFieldRow
+        label="Payment"
+        displayValue={expense.paymentMethod ?? '—'}
+        isActive={editingField === 'paymentMethod'}
+        canEdit={canEdit}
+        isPending={isPending}
+        onActivate={() => activateField('paymentMethod')}
+        onConfirm={handleSaveField}
+        onCancel={cancelEdit}
+      >
+        <input type="text" value={editValues.paymentMethod} onChange={set('paymentMethod')} autoFocus className={inputCls} />
+      </InlineFieldRow>
+
+      {expense.category && <DetailRow label="Category" value={expense.category} />}
+      {expense.currencySource && (
+        <DetailRow
+          label="Currency source"
+          value={CURRENCY_SOURCE_LABELS[expense.currencySource] ?? expense.currencySource}
+        />
+      )}
+      {showAuthenticity && expense.authenticityVerdict && (
+        <AuthenticityRow verdict={expense.authenticityVerdict} />
+      )}
+    </div>
+  )
+
   const lineItemsList = itemsOpen ? (
-    isEditMode ? (
+    editingField === 'lineItems' ? (
       <div className="p-3 space-y-2">
         {editItems.map((item, i) => {
           const qty = parseInt(item.quantity) || 1
@@ -748,75 +985,60 @@ function ExpenseDetail() {
         </button>
       </div>
     ) : (
-      <div className="divide-y divide-border">
-        {expense.items.map((item) => (
-          <div key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 animate-fade-in-up">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-text-1 leading-snug">{item.name}</p>
-              {item.categoryName && (
-                <p className="text-xs text-text-2 mt-0.5">{item.categoryName}</p>
-              )}
+      <div
+        onClick={canEdit && !editingField ? () => activateField('lineItems') : undefined}
+        className={canEdit && !editingField ? 'cursor-pointer' : ''}
+      >
+        <div className="divide-y divide-border">
+          {expense.items.length > 0 ? expense.items.map((item) => (
+            <div key={item.id} className="flex items-start justify-between gap-3 px-4 py-3 animate-fade-in-up">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-text-1 leading-snug">{item.name}</p>
+                {item.categoryName && (
+                  <p className="text-xs text-text-2 mt-0.5">{item.categoryName}</p>
+                )}
+              </div>
+              <span className="text-xs text-text-1 font-medium tabular-nums shrink-0">
+                {item.quantity > 1 ? `${item.quantity}× ` : ''}
+                {formatCurrency(item.totalPrice ?? item.unitPrice ?? 0, expense.currency)}
+              </span>
             </div>
-            <span className="text-xs text-text-1 font-medium tabular-nums shrink-0">
-              {item.quantity > 1 ? `${item.quantity}× ` : ''}
-              {formatCurrency(item.totalPrice ?? item.unitPrice ?? 0, expense.currency)}
-            </span>
-          </div>
-        ))}
+          )) : (
+            canEdit && (
+              <p className="px-4 py-3 text-xs text-text-2">Tap to add line items</p>
+            )
+          )}
+        </div>
       </div>
     )
   ) : null
 
-  const viewMetaRows = (
+  const breakdownContent = (
     <>
-      <DetailRow label="Amount" value={formatCurrency(expense.amount, expense.currency)} />
-      <DetailRow label="Currency" value={expense.currency} />
-      <DetailRow label="Merchant" value={expense.merchant} />
-      <DetailRow label="Date" value={formatDate(expense.date ?? expense.createdAt)} />
-      {expense.notes && <DetailRow label="Notes" value={expense.notes} />}
-      <DetailRow label="Receipt no." value={expense.receiptNumber ?? '—'} />
-      <DetailRow label="Payment" value={expense.paymentMethod ?? '—'} />
-      {expense.category && <DetailRow label="Category" value={expense.category} />}
-      {expense.currencySource && (
-        <DetailRow
-          label="Currency source"
-          value={CURRENCY_SOURCE_LABELS[expense.currencySource] ?? expense.currencySource}
+      <div
+        onClick={canEdit && !editingField ? () => activateField('breakdown') : undefined}
+        className={canEdit && !editingField && editingField !== 'breakdown' ? 'cursor-pointer' : ''}
+      >
+        <TotalBreakdown
+          expense={expense}
+          isEditMode={editingField === 'breakdown'}
+          editTaxLines={editTaxLines}
+          onTaxLinesChange={setEditTaxLines}
+          editSubtotal={editValues.subtotal}
+          editDiscount={editValues.discount}
+          editRounding={editValues.rounding}
+          onSubtotalChange={(v) => setEditValues((ev) => ({ ...ev, subtotal: v }))}
+          onDiscountChange={(v) => setEditValues((ev) => ({ ...ev, discount: v }))}
+          onRoundingChange={(v) => setEditValues((ev) => ({ ...ev, rounding: v }))}
+          editAmount={editingField === 'breakdown' ? editValues.amount : undefined}
+          liveComputed={liveComputed}
+          onUseComputed={handleUseComputed}
+          onUseStoredComputed={canEdit ? handleUseStoredComputed : undefined}
         />
+      </div>
+      {editingField === 'breakdown' && (
+        <SectionConfirmBar onConfirm={handleSaveField} onCancel={cancelEdit} isPending={isPending} />
       )}
-      {showAuthenticity && expense.authenticityVerdict && (
-        <AuthenticityRow verdict={expense.authenticityVerdict} />
-      )}
-    </>
-  )
-
-  const set = (k: keyof EditValues) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-    setEditValues((v) => ({ ...v, [k]: e.target.value }))
-
-  const editMetaRows = (
-    <>
-      <EditRow label="Amount">
-        <input type="number" step="0.01" min="0" value={editValues.amount} onChange={set('amount')} className={inputCls + ' text-right'} />
-      </EditRow>
-      <EditRow label="Currency">
-        <select value={editValues.currency} onChange={set('currency')} className={inputCls}>
-          {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
-        </select>
-      </EditRow>
-      <EditRow label="Merchant">
-        <input type="text" value={editValues.merchant} onChange={set('merchant')} className={inputCls} />
-      </EditRow>
-      <EditRow label="Date">
-        <input type="date" value={editValues.date} onChange={set('date')} className={inputCls} />
-      </EditRow>
-      <EditRow label="Notes">
-        <textarea value={editValues.notes} onChange={set('notes')} rows={3} className={inputCls + ' resize-none'} />
-      </EditRow>
-      <EditRow label="Receipt no.">
-        <input type="text" value={editValues.receiptNumber} onChange={set('receiptNumber')} className={inputCls} />
-      </EditRow>
-      <EditRow label="Payment">
-        <input type="text" value={editValues.paymentMethod} onChange={set('paymentMethod')} className={inputCls} />
-      </EditRow>
     </>
   )
 
@@ -838,14 +1060,6 @@ function ExpenseDetail() {
                 </span>
               )}
               <StatusBadge status={expense.status} />
-              {canEdit && !isEditMode && (
-                <button
-                  onClick={() => enterEditMode(expense)}
-                  className="flex items-center gap-1 h-6 px-2 text-[11px] font-medium text-text-2 border border-border rounded-lg cursor-pointer hover:text-primary hover:border-primary/40 transition-colors duration-150"
-                >
-                  <Pencil size={10} /> Edit
-                </button>
-              )}
             </div>
           </div>
           <p className="text-2xl font-bold text-text-1 tabular-nums mt-2">
@@ -853,7 +1067,7 @@ function ExpenseDetail() {
           </p>
           {showReporting && (
             <p className="text-xs text-text-2 mt-1 tabular-nums">
-              ≈ {formatCurrency(expense.reportingAmount!, expense.reportingCurrency!)}
+              ≈ {formatCurrency(convertedForUser!, userReportingCurrency)}
             </p>
           )}
         </div>
@@ -865,20 +1079,19 @@ function ExpenseDetail() {
           <div className={`bg-background/40 ${detailsOpen ? 'border-b border-border' : ''}`}>
             {detailsHeader}
           </div>
-          {detailsOpen && (
-            <div className="divide-y divide-border">
-              {isEditMode ? editMetaRows : viewMetaRows}
-            </div>
-          )}
+          {detailsOpen && detailRows}
         </div>
 
         {/* Line items */}
-        {(isEditMode || expense.items.length > 0) && (
+        {(canEdit || expense.items.length > 0) && (
           <div className="bg-surface rounded-xl border border-border shadow-sm overflow-hidden">
             <div className="border-b border-border bg-background/40">
               {lineItemsHeader}
             </div>
             {lineItemsList}
+            {editingField === 'lineItems' && itemsOpen && (
+              <SectionConfirmBar onConfirm={handleSaveField} onCancel={cancelEdit} isPending={isPending} />
+            )}
           </div>
         )}
 
@@ -887,27 +1100,8 @@ function ExpenseDetail() {
           <div className={`bg-background/40 ${breakdownOpen ? 'border-b border-border' : ''}`}>
             {breakdownHeader}
           </div>
-          {breakdownOpen && (
-            <TotalBreakdown
-              expense={expense}
-              isEditMode={isEditMode}
-              editTaxLines={editTaxLines}
-              onTaxLinesChange={setEditTaxLines}
-              editSubtotal={editValues.subtotal}
-              editDiscount={editValues.discount}
-              editRounding={editValues.rounding}
-              onSubtotalChange={(v) => setEditValues((ev) => ({ ...ev, subtotal: v }))}
-              onDiscountChange={(v) => setEditValues((ev) => ({ ...ev, discount: v }))}
-              onRoundingChange={(v) => setEditValues((ev) => ({ ...ev, rounding: v }))}
-              editAmount={isEditMode ? editValues.amount : undefined}
-              liveComputed={liveComputed}
-              onUseComputed={handleUseComputed}
-              onUseStoredComputed={canEdit ? handleUseStoredComputed : undefined}
-            />
-          )}
+          {breakdownOpen && breakdownContent}
         </div>
-
-        {isEditMode && <div className="h-20" />}
       </div>
 
       {/* ── DESKTOP layout ── */}
@@ -930,14 +1124,6 @@ function ExpenseDetail() {
                     </span>
                   )}
                   <StatusBadge status={expense.status} />
-                  {canEdit && !isEditMode && (
-                    <button
-                      onClick={() => enterEditMode(expense)}
-                      className="flex items-center gap-1 h-7 px-2.5 text-xs font-medium text-text-2 border border-border rounded-lg cursor-pointer hover:text-primary hover:border-primary/40 transition-colors duration-150"
-                    >
-                      <Pencil size={11} /> Edit
-                    </button>
-                  )}
                 </div>
               </div>
               <p className="text-3xl font-bold text-text-1 tabular-nums">
@@ -945,7 +1131,7 @@ function ExpenseDetail() {
               </p>
               {showReporting && (
                 <p className="text-sm text-text-2 mt-1.5 tabular-nums">
-                  ≈ {formatCurrency(expense.reportingAmount!, expense.reportingCurrency!)}
+                  ≈ {formatCurrency(convertedForUser!, userReportingCurrency)}
                 </p>
               )}
             </div>
@@ -955,51 +1141,32 @@ function ExpenseDetail() {
               <div className={`bg-background/40 ${detailsOpen ? 'border-b border-border' : ''}`}>
                 {detailsHeader}
               </div>
-              {detailsOpen && (
-                <div className="divide-y divide-border">
-                  {isEditMode ? editMetaRows : viewMetaRows}
-                </div>
-              )}
+              {detailsOpen && detailRows}
             </div>
 
             {/* Line items */}
-            {(isEditMode || expense.items.length > 0) && (
+            {(canEdit || expense.items.length > 0) && (
               <div className="border-b border-border">
                 <div className="bg-background/40 border-b border-border">
                   {lineItemsHeader}
                 </div>
                 {lineItemsList}
+                {editingField === 'lineItems' && itemsOpen && (
+                  <SectionConfirmBar onConfirm={handleSaveField} onCancel={cancelEdit} isPending={isPending} />
+                )}
               </div>
             )}
 
             {/* Totals breakdown */}
-            <div className="border-b border-border">
+            <div>
               <div className={`bg-background/40 ${breakdownOpen ? 'border-b border-border' : ''}`}>
                 {breakdownHeader}
               </div>
-              {breakdownOpen && (
-            <TotalBreakdown
-              expense={expense}
-              isEditMode={isEditMode}
-              editTaxLines={editTaxLines}
-              onTaxLinesChange={setEditTaxLines}
-              editSubtotal={editValues.subtotal}
-              editDiscount={editValues.discount}
-              editRounding={editValues.rounding}
-              onSubtotalChange={(v) => setEditValues((ev) => ({ ...ev, subtotal: v }))}
-              onDiscountChange={(v) => setEditValues((ev) => ({ ...ev, discount: v }))}
-              onRoundingChange={(v) => setEditValues((ev) => ({ ...ev, rounding: v }))}
-              editAmount={isEditMode ? editValues.amount : undefined}
-              liveComputed={liveComputed}
-              onUseComputed={handleUseComputed}
-              onUseStoredComputed={canEdit ? handleUseStoredComputed : undefined}
-            />
-          )}
+              {breakdownOpen && breakdownContent}
             </div>
-
           </div>
 
-          {/* Right: Image card (sticky, separate surface) */}
+          {/* Right: Image card (sticky) */}
           <div className="sticky top-14 self-start rounded-2xl border border-border shadow-sm overflow-hidden bg-black/70">
             {receiptUrl ? (
               <button
@@ -1019,30 +1186,7 @@ function ExpenseDetail() {
             )}
           </div>
         </div>
-        {isEditMode && <div className="h-20" />}
       </div>
-
-      {/* ── Floating edit bar ── */}
-      {isEditMode && (
-        <div className="fixed bottom-[76px] lg:bottom-5 left-0 lg:left-56 right-0 z-50 px-4 lg:px-8 pointer-events-none">
-          <div className="pointer-events-auto lg:max-w-lg lg:mx-auto bg-surface/95 backdrop-blur-md border border-border rounded-2xl shadow-xl px-3 py-2.5 flex gap-2">
-              <button
-              onClick={() => setIsEditMode(false)}
-              className="flex-1 h-9 text-sm text-text-2 border border-border rounded-xl cursor-pointer hover:bg-nav-hover-bg transition-colors duration-150"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => handleSaveAll(expense)}
-              disabled={saveAll.isPending || saveItems.isPending}
-              className="flex-1 h-9 flex items-center justify-center gap-1.5 text-sm font-semibold text-white bg-primary rounded-xl disabled:opacity-50 cursor-pointer"
-            >
-              {(saveAll.isPending || saveItems.isPending) ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              Save changes
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Lightbox */}
       {lightboxOpen && receiptUrl && (

@@ -117,9 +117,12 @@ function WorkspaceExpensesScreen() {
                     <p className="flex-1 text-sm font-semibold text-text-1 truncate">{expense.merchant}</p>
                     <StatusBadge status={expense.status} />
                     <span className="text-sm font-semibold text-text-1 tabular-nums shrink-0">
-                      {expense.reportingAmount != null && expense.reportingCurrency
-                        ? formatCurrency(expense.reportingAmount, expense.reportingCurrency)
-                        : formatCurrency(expense.amount, expense.currency)}
+                      {(() => {
+                        const tgt = current.baseCurrency
+                        const converted = expense.reportingAmounts?.[tgt]
+                          ?? (expense.reportingCurrency === tgt ? expense.reportingAmount : null)
+                        return formatCurrency(converted ?? expense.amount, converted != null ? tgt : expense.currency)
+                      })()}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -202,9 +205,12 @@ function WorkspaceExpensesScreen() {
                       )}
                       <td className="px-4 py-3 text-right">
                         <span className="text-sm font-semibold text-text-1 tabular-nums">
-                          {expense.reportingAmount != null && expense.reportingCurrency
-                            ? formatCurrency(expense.reportingAmount, expense.reportingCurrency)
-                            : formatCurrency(expense.amount, expense.currency)}
+                          {(() => {
+                            const tgt = current.baseCurrency
+                            const converted = expense.reportingAmounts?.[tgt]
+                              ?? (expense.reportingCurrency === tgt ? expense.reportingAmount : null)
+                            return formatCurrency(converted ?? expense.amount, converted != null ? tgt : expense.currency)
+                          })()}
                         </span>
                       </td>
                     </tr>

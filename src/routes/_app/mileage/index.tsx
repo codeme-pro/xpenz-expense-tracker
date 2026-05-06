@@ -11,7 +11,9 @@ import { TabStrip } from '#/components/TabStrip'
 import { PersonalFilterBar } from '#/components/PersonalFilterBar'
 import { formatCurrency, formatDate } from '#/lib/format'
 import type { ExpenseStatus, PersonalFilters, WorkspacePeriod } from '#/lib/types'
+import { useWorkspace } from '#/context/WorkspaceContext'
 import { useState } from 'react'
+import { useLongPress } from '#/lib/useLongPress'
 
 export const Route = createFileRoute('/_app/mileage/')({
   validateSearch: (search: Record<string, unknown>): PersonalFilters => ({
@@ -50,9 +52,11 @@ function MileageScreen() {
   const filters = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const queryClient = useQueryClient()
+  const { current } = useWorkspace()
 
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [actionSheet, setActionSheet] = useState<ActionSheet | null>(null)
+  const lp = useLongPress()
 
   // Desktop inline edit state
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -158,7 +162,18 @@ function MileageScreen() {
             {entries.map((entry, i) => (
               <div
                 key={entry.id}
-                className="bg-surface rounded-xl border border-border shadow-sm px-4 py-3 animate-fade-in-up"
+                onPointerDown={(e) => lp.start(entry.id, () => setActionSheet({
+                  id: entry.id,
+                  title: `${entry.fromLocation ?? '—'} → ${entry.toLocation ?? '—'}`,
+                  status: entry.status,
+                  view: 'actions',
+                  from: entry.fromLocation ?? '',
+                  to: entry.toLocation ?? '',
+                }), e)}
+                onPointerUp={lp.cancel}
+                onPointerMove={lp.move}
+                onPointerCancel={lp.cancel}
+                className={`bg-surface rounded-xl border border-border shadow-sm px-4 py-3 transition-all duration-150 animate-fade-in-up ${lp.pressingId === entry.id ? 'scale-[0.97] opacity-80' : ''}`}
                 style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
               >
                 <div className="flex items-start gap-2">
@@ -194,7 +209,7 @@ function MileageScreen() {
                   <span className="flex-1" />
                   <span className="text-xs text-text-2 tabular-nums">{entry.distance} {entry.unit}</span>
                   <span className="text-xs text-text-2 mx-1">·</span>
-                  <span className="text-sm font-semibold text-text-1 tabular-nums">{formatCurrency(entry.amount)}</span>
+                  <span className="text-sm font-semibold text-text-1 tabular-nums">{formatCurrency(entry.amount, current.baseCurrency)}</span>
                 </div>
                 {entry.reportTitle && (
                   <p className="mt-1 text-xs text-primary truncate">{entry.reportTitle}</p>
@@ -355,7 +370,7 @@ function MileageScreen() {
                               )
                             ))}
                             <span className={`text-sm font-semibold tabular-nums transition-opacity duration-150 ${pendingDeleteId === entry.id ? 'text-text-2 opacity-40' : 'text-text-1 group-hover/row:opacity-60'}`}>
-                              {formatCurrency(entry.amount)}
+                              {formatCurrency(entry.amount, current.baseCurrency)}
                             </span>
                           </div>
                         </td>

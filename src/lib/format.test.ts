@@ -3,9 +3,8 @@ import { formatCurrency, formatDate, getInitials, STATUS_LABEL, STATUS_CLASS } f
 
 describe('format', () => {
   it('formatCurrency outputs MYR amount', () => {
-    const result = formatCurrency(156.8)
+    const result = formatCurrency(156.8, 'MYR')
     expect(result).toContain('156.80')
-    // ms-MY locale uses 'RM' symbol
     expect(result).toMatch(/RM|MYR/)
   })
 

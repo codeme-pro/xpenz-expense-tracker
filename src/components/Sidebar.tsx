@@ -15,6 +15,7 @@ import {
   Plus,
   LayoutList,
   MapPin,
+  FilePen,
 } from 'lucide-react'
 import { LogoMark } from '#/assets/LogoMark'
 import type { UserRole } from '#/lib/types'
@@ -336,13 +337,22 @@ export function Sidebar({ role }: SidebarProps) {
           )}
         </div>
 
-        <button
-          onClick={() => openPanel('scan')}
-          className="w-full flex items-center justify-center gap-1.5 h-9 rounded-lg bg-primary text-white text-xs font-semibold touch-manipulation cursor-pointer hover:opacity-90 transition-opacity duration-150"
-        >
-          <Camera size={14} />
-          Scan
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => openPanel('scan')}
+            className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg bg-primary text-white text-xs font-semibold touch-manipulation cursor-pointer hover:opacity-90 transition-opacity duration-150"
+          >
+            <Camera size={14} />
+            Scan
+          </button>
+          <button
+            onClick={() => openPanel('add-expense')}
+            className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg border border-border text-text-1 text-xs font-semibold touch-manipulation cursor-pointer hover:bg-nav-hover-bg transition-colors duration-150"
+          >
+            <FilePen size={14} />
+            Add
+          </button>
+        </div>
       </div>
     </aside>
   )

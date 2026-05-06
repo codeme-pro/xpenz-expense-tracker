@@ -39,7 +39,7 @@ async function fetchUserProfile(userId: string, email: string): Promise<User | n
     email,
     role,
     department: profile.department ?? '',
-    reportingCurrency: profile.reporting_currency ?? 'USD',
+    reportingCurrency: profile.reporting_currency ?? '',
     workspaceId: profile.workspace_id ?? null,
     onboarded: profile.onboarded ?? false,
   }

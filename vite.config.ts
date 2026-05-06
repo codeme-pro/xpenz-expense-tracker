@@ -9,7 +9,7 @@ const config = defineConfig({
     server: {
         host: true,
         port: 3000,
-        allowedHosts: ['xpenz-dev-local.skstech.xyz'],
+        allowedHosts: ['xpenz-dev-local.skstech.xyz', 'xpenz-dev.skstech.xyz'],
     },
     resolve: { tsconfigPaths: true },
     plugins: [

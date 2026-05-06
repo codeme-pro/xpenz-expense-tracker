@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '#/lib/format'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import type { ExpenseStatus, PersonalFilters, WorkspacePeriod } from '#/lib/types'
 import { useState } from 'react'
+import { useLongPress } from '#/lib/useLongPress'
 
 const REPORTS_TABS = [
   { to: '/reports', label: 'Reports' },
@@ -53,6 +54,7 @@ function ReportsScreen() {
   const [newTitle, setNewTitle] = useState('')
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [actionSheet, setActionSheet] = useState<ActionSheet | null>(null)
+  const lp = useLongPress()
 
   const { data: reports = [], isLoading } = useQuery({
     queryKey: queryKeys.reports(filters),
@@ -163,8 +165,12 @@ function ReportsScreen() {
             {reports.map((r, i) => (
               <div
                 key={r.id}
-                onClick={() => navigate({ to: '/reports/$reportId', params: { reportId: r.id } })}
-                className="w-full bg-surface rounded-xl border border-border shadow-sm px-4 py-3 text-left hover:bg-primary/5 transition-colors duration-100 cursor-pointer animate-fade-in-up"
+                onPointerDown={(e) => lp.start(r.id, () => setActionSheet({ id: r.id, title: r.title, status: r.status as ExpenseStatus, confirmingDelete: false }), e)}
+                onPointerUp={lp.cancel}
+                onPointerMove={lp.move}
+                onPointerCancel={lp.cancel}
+                onClick={() => { if (lp.checkFired()) return; navigate({ to: '/reports/$reportId', params: { reportId: r.id } }) }}
+                className={`w-full bg-surface rounded-xl border border-border shadow-sm px-4 py-3 text-left transition-all duration-150 cursor-pointer animate-fade-in-up ${lp.pressingId === r.id ? 'scale-[0.97] opacity-80' : 'hover:bg-primary/5'}`}
                 style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
               >
                 <div className="flex items-center gap-2">

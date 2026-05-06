@@ -6,13 +6,18 @@ import { ChevronRight } from 'lucide-react'
 interface ExpenseRowProps {
   expense: Expense
   onClick?: () => void
-  useReportingAmount?: boolean
+  targetCurrency?: string
 }
 
-export function ExpenseRow({ expense, onClick, useReportingAmount }: ExpenseRowProps) {
-  const showReporting = useReportingAmount && expense.reportingAmount != null && expense.reportingCurrency != null
-  const displayAmount = showReporting ? expense.reportingAmount! : expense.amount
-  const displayCurrency = showReporting ? expense.reportingCurrency! : expense.currency
+export function ExpenseRow({ expense, onClick, targetCurrency }: ExpenseRowProps) {
+  const converted = targetCurrency
+    ? (expense.reportingAmounts?.[targetCurrency]
+        ?? (expense.reportingCurrency === targetCurrency ? expense.reportingAmount : null))
+    : null
+  const displayAmount = converted ?? expense.amount
+  const displayCurrency = converted != null ? targetCurrency! : expense.currency
+
+  const showOriginal = targetCurrency && displayCurrency !== expense.currency
 
   return (
     <button
@@ -34,7 +39,7 @@ export function ExpenseRow({ expense, onClick, useReportingAmount }: ExpenseRowP
         <p className="text-sm font-semibold text-text-1 tabular-nums">
           {formatCurrency(displayAmount, displayCurrency)}
         </p>
-        {showReporting && expense.currency !== expense.reportingCurrency && (
+        {showOriginal && (
           <p className="text-[10px] text-text-2/60 tabular-nums mt-0.5">
             {formatCurrency(expense.amount, expense.currency)}
           </p>

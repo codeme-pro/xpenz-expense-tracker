@@ -14,7 +14,7 @@ function Onboarding() {
   const navigate = useNavigate()
   const { refreshUser } = useAuth()
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
-  const [currency, setCurrency] = useState('MYR')
+  const [currency, setCurrency] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [firstName, setFirstName] = useState('')
@@ -42,6 +42,7 @@ function Onboarding() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (!currency) { setError('Please select a reporting currency.'); return }
     setLoading(true)
     const { data: { session } } = await supabaseAuth.auth.getSession()
     if (!session) { setLoading(false); return }
@@ -96,6 +97,7 @@ function Onboarding() {
               onChange={(e) => setCurrency(e.target.value)}
               className="w-full h-11 px-3 text-sm border border-border rounded-xl bg-surface text-text-1 focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
             >
+              <option value="" disabled>Select currency…</option>
               {currencies.map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.code} — {c.name}

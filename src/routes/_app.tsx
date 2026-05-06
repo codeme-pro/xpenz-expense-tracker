@@ -4,6 +4,7 @@ import { sessionActive } from '#/lib/supabase'
 import { BottomNav } from '#/components/BottomNav'
 import { Sidebar } from '#/components/Sidebar'
 import { ScanPanel } from '#/components/ScanPanel'
+import { AddExpensePanel } from '#/components/AddExpensePanel'
 import { WorkspaceSwitcherSheet } from '#/components/WorkspaceSwitcherSheet'
 import { PanelProvider, usePanel } from '#/context/PanelContext'
 import { WorkspaceProvider, useWorkspace } from '#/context/WorkspaceContext'
@@ -67,6 +68,7 @@ function AppLayout() {
       </div>
 
       {activePanel === 'scan' && <ScanPanel />}
+      {activePanel === 'add-expense' && <AddExpensePanel />}
       {activePanel === 'workspace-switcher' && (
         <div className="lg:hidden">
           <WorkspaceSwitcherSheet />

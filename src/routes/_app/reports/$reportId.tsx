@@ -247,14 +247,22 @@ function ReportDetail() {
                       <span className="text-xs text-gray-600">{e.category ?? '—'}</span>
                     </td>
                     <td className="py-2 align-top text-right">
-                      <p className="font-semibold tabular-nums text-[#1E1B4B]">
-                        {formatCurrency(e.reportingAmount ?? e.amount, e.reportingCurrency ?? e.currency)}
-                      </p>
-                      {e.reportingAmount != null && e.currency !== e.reportingCurrency && (
-                        <p className="text-[10px] text-gray-400 tabular-nums">
-                          {formatCurrency(e.amount, e.currency)}
-                        </p>
-                      )}
+                      {(() => {
+                        const conv = e.reportingAmounts?.[report.currency]
+                          ?? (e.reportingCurrency === report.currency ? e.reportingAmount : null)
+                        return (
+                          <>
+                            <p className="font-semibold tabular-nums text-[#1E1B4B]">
+                              {formatCurrency(conv ?? e.amount, conv != null ? report.currency : e.currency)}
+                            </p>
+                            {e.currency !== report.currency && (
+                              <p className="text-[10px] text-gray-400 tabular-nums">
+                                {formatCurrency(e.amount, e.currency)}
+                              </p>
+                            )}
+                          </>
+                        )
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -291,7 +299,7 @@ function ReportDetail() {
                       <span className="text-xs text-gray-600">{m.distance} {m.unit}</span>
                     </td>
                     <td className="py-2 text-right">
-                      <span className="font-semibold tabular-nums text-[#1E1B4B]">{formatCurrency(m.amount)}</span>
+                      <span className="font-semibold tabular-nums text-[#1E1B4B]">{formatCurrency(m.amount, current.baseCurrency)}</span>
                     </td>
                   </tr>
                 ))}
@@ -346,7 +354,7 @@ function ReportDetail() {
       <div className="flex-1 min-w-0">
         <ExpenseRow
           expense={e}
-          useReportingAmount
+          targetCurrency={report.currency}
           onClick={() => navigate({ to: '/expenses/$expenseId', params: { expenseId: e.id } })}
         />
       </div>
@@ -373,7 +381,7 @@ function ReportDetail() {
         <p className="text-[11px] text-text-2">{m.distance} {m.unit} · {formatDate(m.createdAt)}</p>
       </div>
       <span className="text-xs font-semibold text-text-1 tabular-nums shrink-0">
-        {formatCurrency(m.amount)}
+        {formatCurrency(m.amount, current.baseCurrency)}
       </span>
       {isDraft && (
         <button
@@ -568,14 +576,22 @@ function ReportDetail() {
                           <StatusBadge status={e.status} />
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <p className="text-sm font-semibold text-text-1 tabular-nums">
-                            {formatCurrency(e.reportingAmount ?? e.amount, e.reportingCurrency ?? e.currency)}
-                          </p>
-                          {e.reportingAmount != null && e.currency !== e.reportingCurrency && (
-                            <p className="text-[10px] text-text-2/60 tabular-nums">
-                              {formatCurrency(e.amount, e.currency)}
-                            </p>
-                          )}
+                          {(() => {
+                            const conv = e.reportingAmounts?.[report.currency]
+                              ?? (e.reportingCurrency === report.currency ? e.reportingAmount : null)
+                            return (
+                              <>
+                                <p className="text-sm font-semibold text-text-1 tabular-nums">
+                                  {formatCurrency(conv ?? e.amount, conv != null ? report.currency : e.currency)}
+                                </p>
+                                {e.currency !== report.currency && (
+                                  <p className="text-[10px] text-text-2/60 tabular-nums">
+                                    {formatCurrency(e.amount, e.currency)}
+                                  </p>
+                                )}
+                              </>
+                            )
+                          })()}
                         </td>
                         {isDraft && (
                           <td className="px-3 py-3">
@@ -626,7 +642,7 @@ function ReportDetail() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span className="text-xs font-semibold text-text-1 tabular-nums">
-                            {formatCurrency(m.amount)}
+                            {formatCurrency(m.amount, current.baseCurrency)}
                           </span>
                         </td>
                         {isDraft && (
@@ -793,7 +809,7 @@ function ReportDetail() {
                         <p className="text-xs text-text-2 mt-0.5">{m.distance} {m.unit} · {formatDate(m.createdAt)}</p>
                       </div>
                       <span className="text-sm font-semibold text-text-1 tabular-nums shrink-0">
-                        {formatCurrency(m.amount)}
+                        {formatCurrency(m.amount, current.baseCurrency)}
                       </span>
                     </button>
                   )

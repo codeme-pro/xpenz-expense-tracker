@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Home, FileText, Camera, Users, Settings } from 'lucide-react'
+import { Home, FileText, Camera, Users, Settings, FilePen, Plus, X } from 'lucide-react'
 import { fetchInbox } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
 
@@ -10,6 +11,7 @@ export function BottomNav() {
   const navigate = useNavigate()
   const { data: inbox = [] } = useQuery({ queryKey: queryKeys.inbox(), queryFn: fetchInbox, staleTime: 30_000 })
   const unreadCount = inbox.filter((i) => !i.read).length
+  const [speedDialOpen, setSpeedDialOpen] = useState(false)
 
   const isActive = (paths: string[]) =>
     paths.some((p) => pathname === p || pathname.startsWith(p + '/') || pathname.startsWith(p))
@@ -29,9 +31,17 @@ export function BottomNav() {
       aria-label="Main navigation"
       className="fixed bottom-0 left-0 right-0 bg-nav border-t border-border z-40 overflow-visible"
     >
+      {/* Speed dial backdrop */}
+      {speedDialOpen && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => setSpeedDialOpen(false)}
+        />
+      )}
+
       <ul className="flex px-2 py-2 gap-1" role="list">
 
-        {/* Home — inherits inbox badge */}
+        {/* Home */}
         <li className="flex-1">
           <Link
             to="/home"
@@ -48,7 +58,7 @@ export function BottomNav() {
           </Link>
         </li>
 
-        {/* Reports */}
+        {/* Activity */}
         <li className="flex-1">
           <Link
             to="/reports"
@@ -60,14 +70,33 @@ export function BottomNav() {
           </Link>
         </li>
 
-        {/* Scan CTA (center — raised circle, no label) */}
-        <li className="flex-1 flex items-center justify-center">
+        {/* Center FAB — speed dial */}
+        <li className="flex-1 flex items-center justify-center relative">
+          {speedDialOpen && (
+            <div className="absolute bottom-[calc(100%+4px)] left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-40 pb-1">
+              <button
+                onClick={() => { setSpeedDialOpen(false); navigate({ to: '/expenses/new' }) }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface border border-border shadow-lg text-sm font-medium text-text-1 whitespace-nowrap touch-manipulation cursor-pointer active:scale-95 transition-transform duration-100"
+              >
+                <FilePen size={15} className="text-primary" />
+                Add manually
+              </button>
+              <button
+                onClick={() => { setSpeedDialOpen(false); navigate({ to: '/scan' }) }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface border border-border shadow-lg text-sm font-medium text-text-1 whitespace-nowrap touch-manipulation cursor-pointer active:scale-95 transition-transform duration-100"
+              >
+                <Camera size={15} className="text-primary" />
+                Scan
+              </button>
+            </div>
+          )}
           <button
-            onClick={() => navigate({ to: '/scan' })}
-            aria-label="Scan receipt or mileage"
-            className="-translate-y-4 w-14 h-14 rounded-full bg-primary text-white shadow-lg shadow-primary/40 flex items-center justify-center touch-manipulation cursor-pointer active:scale-95 transition-transform duration-100"
+            onClick={() => setSpeedDialOpen((v) => !v)}
+            aria-label="Add expense"
+            aria-expanded={speedDialOpen}
+            className={`-translate-y-4 w-14 h-14 rounded-full bg-primary text-white shadow-lg shadow-primary/40 flex items-center justify-center touch-manipulation cursor-pointer active:scale-95 transition-all duration-200 z-40 relative ${speedDialOpen ? 'rotate-45' : ''}`}
           >
-            <Camera size={24} />
+            {speedDialOpen ? <X size={22} /> : <Plus size={22} />}
           </button>
         </li>
 

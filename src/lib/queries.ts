@@ -29,7 +29,7 @@ function mapExpense(row: RawExpense): Expense {
     title: merchant,
     merchant,
     amount: (row.amount as number | null) ?? 0,
-    currency: (row.currency as string | null) ?? 'MYR',
+    currency: (row.currency as string | null) ?? '',
     reportingCurrency: row.reporting_currency as string | null,
     reportingAmount: row.reporting_amount as number | null,
     reportingAmounts: (row.reporting_amounts as Record<string, number> | null) ?? null,
@@ -242,7 +242,7 @@ export async function fetchReports(filters?: PersonalFilters): Promise<Report[]>
 
 const APPROVAL_SELECT = `
   id, user_id, merchant, amount, currency, date, status, notes,
-  report_id, scan_id, reporting_currency, reporting_amount, currency_source,
+  report_id, scan_id, reporting_currency, reporting_amount, reporting_amounts, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
   scans!scan_id ( file_path ),
   reports!report_id ( id, title ),
@@ -664,4 +664,51 @@ export async function updateWorkspaceBaseCurrency(workspaceId: string, baseCurre
     .update({ base_currency: baseCurrency })
     .eq('id', workspaceId)
   if (error) throw error
+}
+
+export async function createExpense(data: {
+  merchant: string
+  amount: number
+  currency: string
+  date: string | null
+  notes: string | null
+  paymentMethod: string | null
+  workspaceId: string
+  userId: string
+}): Promise<string> {
+  const { data: row, error } = await db
+    .from('expenses')
+    .insert({
+      merchant: data.merchant,
+      amount: data.amount,
+      currency: data.currency,
+      date: data.date,
+      notes: data.notes,
+      payment_method: data.paymentMethod,
+      workspace_id: data.workspaceId,
+      user_id: data.userId,
+      status: 'draft',
+      scan_id: null,
+    })
+    .select('id')
+    .single()
+  if (error) throw error
+  return row.id
+}
+
+export async function createWorkspace(name: string, baseCurrency: string): Promise<string> {
+  const { data: { user } } = await supabaseAuth.auth.getUser()
+  if (!user) throw new Error('Not authenticated')
+  const planExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  const { data: ws, error: wsError } = await db
+    .from('workspaces')
+    .insert({ name, base_currency: baseCurrency, plan: 'trial', plan_expires_at: planExpiresAt })
+    .select('id')
+    .single()
+  if (wsError) throw wsError
+  const { error: memberError } = await db
+    .from('workspace_members')
+    .insert({ workspace_id: ws.id, user_id: user.id, role: 'owner' })
+  if (memberError) throw memberError
+  return ws.id
 }

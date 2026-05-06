@@ -10,6 +10,7 @@ import { StatusBadge } from '#/components/StatusBadge'
 import { formatCurrency } from '#/lib/format'
 import { supabaseAuth } from '#/lib/supabase'
 import { useAuth } from '#/context/AuthContext'
+import { useWorkspace } from '#/context/WorkspaceContext'
 import type { Expense } from '#/lib/types'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
@@ -21,7 +22,8 @@ function HomeScreen() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { user } = useAuth()
-  const reportingCurrency = user?.reportingCurrency ?? 'MYR'
+  const { current } = useWorkspace()
+  const reportingCurrency = user?.reportingCurrency || current.baseCurrency
 
   const { data: expenses = [] } = useQuery({
     queryKey: queryKeys.expenses(),
@@ -106,7 +108,10 @@ function HomeScreen() {
     let totalThisMonth = 0, pendingCount = 0, approvedCount = 0, draftCount = 0
     for (const e of expenses) {
       if (e.createdAt.startsWith(currentMonth)) {
-        const converted = e.reportingAmounts?.[reportingCurrency] ?? e.reportingAmount ?? null
+        const converted =
+          e.reportingAmounts?.[reportingCurrency] ??
+          (e.reportingCurrency === reportingCurrency ? e.reportingAmount : null) ??
+          (e.currency === reportingCurrency ? e.amount : null)
         if (converted !== null) totalThisMonth += converted
       }
       if (e.status === 'submitted') pendingCount++
@@ -190,7 +195,7 @@ function HomeScreen() {
                   <div className="flex items-center gap-3 shrink-0 ml-3">
                     <StatusBadge status={r.status} />
                     <span className="text-sm font-semibold text-text-1 tabular-nums">
-                      {formatCurrency(r.totalAmount)}
+                      {formatCurrency(r.totalAmount, r.currency)}
                     </span>
                   </div>
                 </button>
@@ -222,7 +227,11 @@ function HomeScreen() {
                   <div className="flex items-center gap-3 shrink-0 ml-3">
                     <StatusBadge status={e.status} />
                     <span className="text-sm font-semibold text-text-1 tabular-nums">
-                      {formatCurrency(e.amount, e.currency)}
+                      {(() => {
+                        const conv = e.reportingAmounts?.[reportingCurrency]
+                          ?? (e.reportingCurrency === reportingCurrency ? e.reportingAmount : null)
+                        return formatCurrency(conv ?? e.amount, conv != null ? reportingCurrency : e.currency)
+                      })()}
                     </span>
                   </div>
                 </button>

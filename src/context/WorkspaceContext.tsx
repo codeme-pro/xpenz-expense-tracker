@@ -104,7 +104,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ownerName: '',
         mileageRate: Number(ws.mileage_rate_per_km ?? 0.80),
         isPremium: ws.plan === 'premium',
-        baseCurrency: ws.base_currency ?? 'MYR',
+        baseCurrency: ws.base_currency ?? '',
       }
     })
 

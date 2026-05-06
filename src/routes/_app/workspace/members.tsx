@@ -128,7 +128,7 @@ function WorkspaceMembersScreen() {
               </div>
               <div className="text-right shrink-0">
                 <p className="text-sm font-semibold text-text-1 tabular-nums">
-                  {formatCurrency(member.totalExpenses)}
+                  {formatCurrency(member.totalExpenses, current.baseCurrency)}
                 </p>
                 {member.pendingExpenses > 0 && (
                   <p className="text-xs text-primary mt-0.5">{member.pendingExpenses} pending</p>

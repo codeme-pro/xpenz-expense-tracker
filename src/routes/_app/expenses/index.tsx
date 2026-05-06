@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Receipt, Trash2, MoreVertical, X, Check, Loader2 } from 'lucide-react'
+import { Receipt, Trash2, X, Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchExpenses, deleteExpense } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
@@ -12,6 +12,9 @@ import { PersonalFilterBar } from '#/components/PersonalFilterBar'
 import { formatCurrency, formatDate } from '#/lib/format'
 import type { ExpenseStatus, PersonalFilters, WorkspacePeriod } from '#/lib/types'
 import { useState } from 'react'
+import { useLongPress } from '#/lib/useLongPress'
+import { useAuth } from '#/context/AuthContext'
+import { useWorkspace } from '#/context/WorkspaceContext'
 
 const REPORTS_TABS = [
   { to: '/reports', label: 'Reports' },
@@ -47,9 +50,13 @@ function ExpensesScreen() {
   const filters = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const { current } = useWorkspace()
+  const reportingCurrency = user?.reportingCurrency || current.baseCurrency
 
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [actionSheet, setActionSheet] = useState<ActionSheet | null>(null)
+  const lp = useLongPress()
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: queryKeys.expenses(filters),
@@ -102,22 +109,16 @@ function ExpensesScreen() {
             {expenses.map((expense, i) => (
               <div
                 key={expense.id}
-                onClick={() => navigate({ to: '/expenses/$expenseId', params: { expenseId: expense.id } })}
-                className="w-full bg-surface rounded-xl border border-border shadow-sm px-4 py-3 text-left hover:bg-primary/5 transition-colors duration-100 cursor-pointer animate-fade-in-up"
+                onPointerDown={(e) => lp.start(expense.id, () => setActionSheet({ id: expense.id, title: expense.merchant, status: expense.status, confirmingDelete: false }), e)}
+                onPointerUp={lp.cancel}
+                onPointerMove={lp.move}
+                onPointerCancel={lp.cancel}
+                onClick={() => { if (lp.checkFired()) return; navigate({ to: '/expenses/$expenseId', params: { expenseId: expense.id } }) }}
+                className={`w-full bg-surface rounded-xl border border-border shadow-sm px-4 py-3 text-left transition-all duration-150 cursor-pointer animate-fade-in-up ${lp.pressingId === expense.id ? 'scale-[0.97] opacity-80' : 'hover:bg-primary/5'}`}
                 style={{ '--stagger-delay': `${i * 40}ms` } as React.CSSProperties}
               >
                 <div className="flex items-center gap-2">
                   <p className="flex-1 text-sm font-semibold text-text-1 truncate">{expense.merchant}</p>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setActionSheet({ id: expense.id, title: expense.merchant, status: expense.status, confirmingDelete: false })
-                    }}
-                    className="p-1.5 -mr-1 rounded-lg text-text-2 active:bg-background transition-colors duration-150 cursor-pointer"
-                    aria-label="More actions"
-                  >
-                    <MoreVertical size={15} />
-                  </button>
                 </div>
                 <div className="flex items-center gap-1.5 mt-1">
                   <StatusBadge status={expense.status} />
@@ -131,9 +132,11 @@ function ExpensesScreen() {
                   )}
                   <span className="flex-1" />
                   <span className="text-sm font-semibold text-text-1 tabular-nums shrink-0">
-                    {expense.reportingAmount != null && expense.reportingCurrency
-                      ? formatCurrency(expense.reportingAmount, expense.reportingCurrency)
-                      : formatCurrency(expense.amount, expense.currency)}
+                    {(() => {
+                      const conv = expense.reportingAmounts?.[reportingCurrency]
+                        ?? (expense.reportingCurrency === reportingCurrency ? expense.reportingAmount : null)
+                      return formatCurrency(conv ?? expense.amount, conv != null ? reportingCurrency : expense.currency)
+                    })()}
                   </span>
                 </div>
                 {expense.reportTitle && (
@@ -228,9 +231,11 @@ function ExpensesScreen() {
                             )
                           )}
                           <span className={`text-sm font-semibold tabular-nums transition-opacity duration-150 ${pendingDeleteId === expense.id ? 'text-text-2 opacity-40' : 'text-text-1 group-hover/row:opacity-60'}`}>
-                            {expense.reportingAmount != null && expense.reportingCurrency
-                              ? formatCurrency(expense.reportingAmount, expense.reportingCurrency)
-                              : formatCurrency(expense.amount, expense.currency)}
+                            {(() => {
+                              const converted = expense.reportingAmounts?.[reportingCurrency]
+                                ?? (expense.reportingCurrency === reportingCurrency ? expense.reportingAmount : null)
+                              return formatCurrency(converted ?? expense.amount, converted != null ? reportingCurrency : expense.currency)
+                            })()}
                           </span>
                         </div>
                       </td>
