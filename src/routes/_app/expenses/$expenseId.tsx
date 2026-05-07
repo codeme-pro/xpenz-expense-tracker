@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useRef } from 'react'
-import { X, ImageOff, ChevronDown, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2 } from 'lucide-react'
+import { X, ImageOff, ChevronDown, Check, AlertTriangle, ShieldCheck, ShieldAlert, Shield, Loader2, Plus, Trash2, Minimize2, Move } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchCategories, fetchCurrencies, fetchExpense, fetchScanSignedUrl, updateExpense, updateExpenseItems, deleteExpense } from '#/lib/queries'
 import { supabaseAuth } from '#/lib/supabase'
@@ -512,6 +512,22 @@ function ExpenseDetail() {
   const [editItems, setEditItems] = useState<EditItem[]>([])
   const pendingConversionRef = useRef(false)
 
+  const [imgScale, setImgScale] = useState(1)
+  const [imgOffset, setImgOffset] = useState({ x: 0, y: 0 })
+  const [imgAnimating, setImgAnimating] = useState(false)
+  const imgContainerRef = useRef<HTMLDivElement>(null)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const gestureRef = useRef({
+    pointers: new Map<number, { x: number; y: number }>(),
+    dragStart: null as { x: number; y: number; ox: number; oy: number } | null,
+    pinchStart: null as { dist: number; scale: number } | null,
+    hasMoved: false,
+    wasPinching: false,
+    scale: 1,
+    ox: 0,
+    oy: 0,
+  })
+
   const { data: expense, isLoading } = useQuery({
     queryKey: queryKeys.expense(expenseId),
     queryFn: () => fetchExpense(expenseId),
@@ -772,14 +788,126 @@ function ExpenseDetail() {
 
   const isPending = saveAll.isPending || saveItems.isPending
 
+  const clampImgOffset = (x: number, y: number, scale: number) => {
+    const container = imgContainerRef.current
+    const img = imgRef.current
+    if (!container || !img) return { x, y }
+    const minX = Math.min(0, container.clientWidth - img.clientWidth * scale)
+    const minY = Math.min(0, container.clientHeight - img.clientHeight * scale)
+    return { x: Math.max(minX, Math.min(0, x)), y: Math.max(minY, Math.min(0, y)) }
+  }
+
+  const resetImgTransform = () => {
+    const g = gestureRef.current
+    g.scale = 1; g.ox = 0; g.oy = 0
+    setImgAnimating(true)
+    setImgScale(1)
+    setImgOffset({ x: 0, y: 0 })
+    setTimeout(() => setImgAnimating(false), 200)
+  }
+
+  const onImgPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const g = gestureRef.current
+    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (g.pointers.size === 1) {
+      g.wasPinching = false
+      g.hasMoved = false
+      g.pinchStart = null
+      g.dragStart = { x: e.clientX, y: e.clientY, ox: g.ox, oy: g.oy }
+    } else if (g.pointers.size === 2) {
+      g.wasPinching = true
+      g.dragStart = null
+      const pts = Array.from(g.pointers.values())
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+      g.pinchStart = { dist, scale: g.scale }
+    }
+  }
+
+  const onImgPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = gestureRef.current
+    if (!g.pointers.has(e.pointerId)) return
+    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (g.pinchStart && g.pointers.size === 2) {
+      const pts = Array.from(g.pointers.values())
+      const ptsArr = Array.from(pts)
+      const dist = Math.hypot(ptsArr[1].x - ptsArr[0].x, ptsArr[1].y - ptsArr[0].y)
+      const newScale = Math.max(1, Math.min(4, g.pinchStart.scale * (dist / g.pinchStart.dist)))
+      const container = imgContainerRef.current
+      if (container && newScale !== g.scale) {
+        const rect = container.getBoundingClientRect()
+        const midX = (ptsArr[0].x + ptsArr[1].x) / 2 - rect.left
+        const midY = (ptsArr[0].y + ptsArr[1].y) / 2 - rect.top
+        const ratio = newScale / g.scale
+        const clamped = clampImgOffset(midX * (1 - ratio) + g.ox * ratio, midY * (1 - ratio) + g.oy * ratio, newScale)
+        g.ox = clamped.x; g.oy = clamped.y
+        setImgOffset(clamped)
+      }
+      g.scale = newScale
+      setImgScale(newScale)
+    } else if (g.dragStart && g.pointers.size === 1) {
+      const dx = e.clientX - g.dragStart.x
+      const dy = e.clientY - g.dragStart.y
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) g.hasMoved = true
+      const clamped = clampImgOffset(g.dragStart.ox + dx, g.dragStart.oy + dy, g.scale)
+      g.ox = clamped.x; g.oy = clamped.y
+      setImgOffset(clamped)
+    }
+  }
+
+  const onImgPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = gestureRef.current
+    const wasTap = !g.hasMoved && g.pointers.size === 1 && !g.wasPinching
+    g.pointers.delete(e.pointerId)
+    if (g.pointers.size < 2) g.pinchStart = null
+    if (g.pointers.size === 0) {
+      g.dragStart = null
+      if (wasTap) setLightboxOpen(true)
+    }
+  }
+
   const receiptThumb = receiptUrl ? (
-    <button
-      onClick={() => setLightboxOpen(true)}
-      className="w-full bg-surface rounded-xl border border-border shadow-sm overflow-hidden cursor-pointer hover:opacity-90 transition-opacity duration-150"
-      aria-label="View receipt image"
-    >
-      <img src={receiptUrl} alt="Receipt" className="w-full max-h-48 object-cover object-top" loading="lazy" decoding="async" />
-    </button>
+    <div className="relative w-full bg-surface rounded-xl border border-border shadow-sm overflow-hidden">
+      <div
+        ref={imgContainerRef}
+        className="w-full h-48 overflow-hidden select-none"
+        style={{ touchAction: 'none' }}
+        onPointerDown={onImgPointerDown}
+        onPointerMove={onImgPointerMove}
+        onPointerUp={onImgPointerUp}
+        onPointerCancel={onImgPointerUp}
+      >
+        <img
+          ref={imgRef}
+          src={receiptUrl}
+          alt="Receipt"
+          className="w-full pointer-events-none select-none"
+          style={{
+            transform: `translate(${imgOffset.x}px, ${imgOffset.y}px) scale(${imgScale})`,
+            transformOrigin: 'top left',
+            transition: imgAnimating ? 'transform 0.2s ease-out' : undefined,
+          }}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      </div>
+      {imgScale > 1 && (
+        <button
+          onClick={resetImgTransform}
+          className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 text-white text-[10px] font-medium backdrop-blur-sm z-10"
+          aria-label="Reset zoom"
+        >
+          <Minimize2 size={10} />
+          Reset
+        </button>
+      )}
+      <div className="absolute bottom-1.5 right-1.5 z-10 pointer-events-none">
+        <div className="flex items-center justify-center w-5 h-5 rounded-md bg-black/50 backdrop-blur-sm">
+          <Move size={11} className="text-white/70" />
+        </div>
+      </div>
+    </div>
   ) : null
 
   const detailsHeader = (
@@ -827,11 +955,6 @@ function ExpenseDetail() {
     </button>
   )
 
-  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
-    if (!acc[cat.groupName]) acc[cat.groupName] = []
-    acc[cat.groupName].push(cat)
-    return acc
-  }, {})
 
   const detailRows = (
     <div className="divide-y divide-border">
@@ -941,13 +1064,8 @@ function ExpenseDetail() {
         onCancel={cancelEdit}
       >
         <select value={editValues.categoryId} onChange={set('categoryId')} autoFocus className={inputCls}>
-          <option value="">— No category —</option>
-          {Object.entries(categoryGroups).map(([group, cats]) => (
-            <optgroup key={group} label={group}>
-              {cats.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </optgroup>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.category}</option>
           ))}
         </select>
       </InlineFieldRow>

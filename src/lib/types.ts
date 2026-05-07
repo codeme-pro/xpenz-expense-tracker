@@ -119,10 +119,12 @@ export interface MileageEntry {
 
 export interface Category {
   id: string
-  name: string
-  groupName: string
+  category: string
+  items: string[] | null
   description: string | null
   sortOrder: number
+  icon: string | null
+  color: string | null
 }
 
 export type WorkspacePeriod = 'all_time' | 'this_month' | 'last_month' | 'last_3_months'

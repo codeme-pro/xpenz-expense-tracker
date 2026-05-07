@@ -8,7 +8,7 @@ type RawItem = {
   unit_price: number | null
   total_price: number | null
   category_id: string | null
-  lookup_categories: { name: string } | null
+  lookup_categories: { category: string } | null
 }
 
 type RawExpense = Record<string, unknown> & { expense_items: RawItem[] }
@@ -21,7 +21,7 @@ function mapExpense(row: RawExpense): Expense {
     unitPrice: item.unit_price,
     totalPrice: item.total_price,
     categoryId: item.category_id,
-    categoryName: item.lookup_categories?.name ?? null,
+    categoryName: item.lookup_categories?.category ?? null,
   }))
   const merchant = (row.merchant as string | null) ?? '—'
   return {
@@ -36,7 +36,7 @@ function mapExpense(row: RawExpense): Expense {
     currencySource: row.currency_source as string | null,
     categoryId: (row.category_id as string | null) ?? null,
     category:
-      (row.lookup_categories as { name: string } | null)?.name ??
+      (row.lookup_categories as { category: string } | null)?.category ??
       items[0]?.categoryName ??
       null,
     status: row.status as ExpenseStatus,
@@ -75,12 +75,12 @@ const EXPENSE_SELECT = `
   subtotal, tax, tax_breakdown, discount, rounding, computed_grand_total,
   exchange_rate, exchange_rate_date, exchange_rate_source,
   receipt_number, payment_method, is_edited,
-  category_id, lookup_categories!category_id ( name ),
+  category_id, lookup_categories!category_id ( category ),
   scans!scan_id ( file_path ),
   reports!report_id ( id, title ),
   expense_items (
     id, name, quantity, unit_price, total_price, category_id,
-    lookup_categories!category_id ( name )
+    lookup_categories!category_id ( category )
   )
 `
 
@@ -250,12 +250,12 @@ const APPROVAL_SELECT = `
   id, user_id, merchant, amount, currency, date, status, notes,
   report_id, scan_id, reporting_currency, reporting_amount, reporting_amounts, currency_source,
   authenticity_verdict, authenticity_score, flags, created_at,
-  category_id, lookup_categories!category_id ( name ),
+  category_id, lookup_categories!category_id ( category ),
   scans!scan_id ( file_path ),
   reports!report_id ( id, title ),
   expense_items (
     id, name, quantity, unit_price, total_price, category_id,
-    lookup_categories!category_id ( name )
+    lookup_categories!category_id ( category )
   ),
   users!user_id ( name )
 `
@@ -679,15 +679,17 @@ export async function updateWorkspaceBaseCurrency(workspaceId: string, baseCurre
 export async function fetchCategories(): Promise<Category[]> {
   const { data, error } = await db
     .from('lookup_categories')
-    .select('id, name, group_name, description, sort_order')
+    .select('id, category, items, description, sort_order, icon, color')
     .order('sort_order')
   if (error) throw error
   return (data ?? []).map((c) => ({
     id: c.id,
-    name: c.name,
-    groupName: c.group_name,
+    category: c.category,
+    items: c.items,
     description: c.description,
     sortOrder: c.sort_order,
+    icon: c.icon,
+    color: c.color,
   }))
 }
 

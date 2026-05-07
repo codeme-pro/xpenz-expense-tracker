@@ -81,12 +81,15 @@ async function ocrAndParse(
   client: Mistral,
   imageBase64: string,
   mimeType: string,
-  categories: { id: string; name: string; description: string | null; group_name: string | null }[],
+  categories: { id: string; category: string; items: string[] | null; description: string | null }[],
   transportModes: { id: string; name: string; slug: string }[],
   currencyHint: string | null,
 ): Promise<{ markdown: string; parsed: ParsedResult }> {
   const categoryList = categories
-    .map((c) => `- "${c.id}" → ${c.name}${c.description ? `: ${c.description}` : ""}`)
+    .map((c) => {
+      const itemsStr = c.items?.length ? ` [${c.items.join(", ")}]` : ""
+      return `- "${c.id}" → ${c.category}${itemsStr}${c.description ? `: ${c.description}` : ""}`
+    })
     .join("\n");
 
   const transportModeList = transportModes
@@ -280,10 +283,11 @@ Never hallucinate missing structures.
 
 --- CATEGORY RULES ---
 
-Assign category_id to each line item using ONLY these exact values:
+Assign category_id to each line item using ONLY these exact UUID values:
 ${categoryList}
 
-If no match → use the "Others" category_id.
+Pick the category whose items list best matches the line item.
+If no match → use the "Insurance & Miscellaneous" category_id.
 
 ---
 
@@ -295,30 +299,30 @@ Base the decision on the merchant name, merchant type, and the most representati
 Use ONLY the exact UUID values listed above.
 
 Examples:
-- Restaurant or café receipt → "Business Meals (Internal)" or "Business Meals (Client)"
-- Grab, Uber, taxi, train ticket → "Ground Transportation"
-- Hotel, resort, Airbnb → "Hotel/Lodging"
-- Petrol station, fuel receipt → "Fuel"
-- Flight, airline → "Airfare"
-- Parking, toll, highway → "Parking & Tolls"
-- Software invoice (Slack, Zoom, Adobe, etc.) → "Software/SaaS"
-- Hardware store, electronics → "Hardware"
-- Office stationery, supplies shop → "Office Supplies"
-- Telco bill, internet invoice → "Telecommunications"
-- Courier, postage, freight → "Postage & Shipping"
-- Conference registration → "Conferences & Events"
-- Course, certification fee → "Training & Certifications"
-- Professional association → "Memberships"
-- Bookshop, online learning → "Books & Resources"
-- Ad platform invoice (Google, Meta) → "Marketing/Advertising"
-- Lawyer, accountant, consultant → "Legal & Professional"
-- Coworking space, office rent → "Rent"
-- Recruitment platform → "Recruiting"
-- Insurance premium → "Business Insurance"
-- Bank fees → "Bank Charges"
-- Gift shop, corporate gift → "Gifts"
+- Restaurant, café, team lunch, client dinner → "Meals & Entertainment"
+- Grab, Uber, taxi, train ticket, bus → "Travel & Lodging"
+- Hotel, resort, Airbnb → "Travel & Lodging"
+- Petrol station, fuel receipt → "Auto & Mileage"
+- Flight, airline → "Travel & Lodging"
+- Parking, toll, highway → "Travel & Lodging"
+- Software invoice (Slack, Zoom, Adobe, etc.) → "Office & Technology"
+- Hardware store, electronics → "Office & Technology"
+- Office stationery, supplies shop → "Office & Technology"
+- Telco bill, internet invoice → "Office & Technology"
+- Courier, postage, freight → "Office & Technology"
+- Conference registration → "Professional Development"
+- Course, certification fee → "Professional Development"
+- Professional association → "Professional Development"
+- Bookshop, online learning → "Professional Development"
+- Ad platform invoice (Google, Meta) → "Operations & Facilities"
+- Lawyer, accountant, consultant → "Operations & Facilities"
+- Coworking space, office rent → "Operations & Facilities"
+- Recruitment platform → "Operations & Facilities"
+- Insurance premium → "Insurance & Miscellaneous"
+- Bank fees → "Insurance & Miscellaneous"
+- Gift shop, corporate gift → "Insurance & Miscellaneous"
 
-If uncertain → use "Others" UUID.
+If uncertain → use "Insurance & Miscellaneous" UUID (contains "Others").
 Set expense_category_id = null only if type is not "expense".
 
 ---
@@ -569,7 +573,7 @@ Deno.serve(async (req: Request) => {
 
     // ─── 5. Fetch lookup tables ────────────────────────────────────────────
     const [catRes, transportRes, currencyRes] = await Promise.all([
-      supabaseAdmin.from("lookup_categories").select("id, name, description, group_name").order("sort_order"),
+      supabaseAdmin.from("lookup_categories").select("id, category, items, description").order("sort_order"),
       supabaseAdmin.from("lookup_transport_mode").select("id, name, slug"),
       supabaseAdmin.from("lookup_currencies").select("code"),
     ]);

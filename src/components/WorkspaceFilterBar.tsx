@@ -39,11 +39,6 @@ export function WorkspaceFilterBar({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
-  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
-    if (!acc[cat.groupName]) acc[cat.groupName] = []
-    acc[cat.groupName].push(cat)
-    return acc
-  }, {})
 
   useEffect(() => {
     setSearchInput(filters.search ?? '')
@@ -109,12 +104,8 @@ export function WorkspaceFilterBar({
         className={selectClass}
       >
         <option value="">All categories</option>
-        {Object.entries(categoryGroups).map(([group, cats]) => (
-          <optgroup key={group} label={group}>
-            {cats.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </optgroup>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>{c.category}</option>
         ))}
       </select>
 

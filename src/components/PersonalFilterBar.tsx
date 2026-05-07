@@ -31,11 +31,6 @@ export function PersonalFilterBar({ filters, onFilterChange, showSearch = false 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
-  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
-    if (!acc[cat.groupName]) acc[cat.groupName] = []
-    acc[cat.groupName].push(cat)
-    return acc
-  }, {})
 
   useEffect(() => {
     setSearchInput(filters.search ?? '')
@@ -141,12 +136,8 @@ export function PersonalFilterBar({ filters, onFilterChange, showSearch = false 
               className="w-full h-8 px-2 text-xs border border-border rounded-lg bg-surface text-text-1 focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <option value="">All categories</option>
-              {Object.entries(categoryGroups).map(([group, cats]) => (
-                <optgroup key={group} label={group}>
-                  {cats.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </optgroup>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.category}</option>
               ))}
             </select>
           </div>

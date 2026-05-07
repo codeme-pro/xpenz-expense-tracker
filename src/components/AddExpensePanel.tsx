@@ -31,11 +31,6 @@ export function AddExpensePanel() {
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies, staleTime: Infinity })
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['categories'], queryFn: fetchCategories, staleTime: Infinity })
 
-  const categoryGroups = categories.reduce<Record<string, Category[]>>((acc, cat) => {
-    if (!acc[cat.groupName]) acc[cat.groupName] = []
-    acc[cat.groupName].push(cat)
-    return acc
-  }, {})
 
   const create = useMutation({
     mutationFn: () => createExpense({
@@ -159,13 +154,8 @@ export function AddExpensePanel() {
               onChange={(e) => setCategoryId(e.target.value)}
               className={inputCls}
             >
-              <option value="">— No category —</option>
-              {Object.entries(categoryGroups).map(([group, cats]) => (
-                <optgroup key={group} label={group}>
-                  {cats.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </optgroup>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.category}</option>
               ))}
             </select>
           </div>
