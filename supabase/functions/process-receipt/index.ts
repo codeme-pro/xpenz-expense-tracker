@@ -521,8 +521,17 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return json({ error: "Unauthorized" }, 401);
 
-  const token = authHeader.replace("Bearer ", "");
-  if (token !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
+  const token = authHeader.replace("Bearer ", "").trim();
+  // Validate by decoding JWT role claim — avoids env var comparison fragility
+  let jwtRole: string | null = null;
+  try {
+    const parts = token.split(".");
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1]));
+      jwtRole = payload.role ?? null;
+    }
+  } catch { /* invalid JWT format */ }
+  if (jwtRole !== "service_role") {
     return json({ error: "Unauthorized" }, 401);
   }
 

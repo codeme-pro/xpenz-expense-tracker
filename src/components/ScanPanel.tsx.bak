@@ -19,8 +19,42 @@ interface Preview {
   blob: Blob
 }
 
-const CONCURRENCY = 3
-const UPLOAD_URL = () => `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`
+async function runBatchUpload(
+  items: QueueItem[],
+  token: string,
+  setQueue: React.Dispatch<React.SetStateAction<QueueItem[]>>,
+) {
+  const baseUrl = `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`
+  let nextIdx = 0
+
+  async function processNext(): Promise<void> {
+    const idx = nextIdx++
+    if (idx >= items.length) return
+    const item = items[idx]
+    setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'uploading' } : i))
+    try {
+      const fd = new FormData()
+      fd.append('receipt', item.file, item.file.name)
+      const res = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
+      setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'done' } : i))
+    } catch (err) {
+      setQueue(prev => prev.map(i =>
+        i.id === item.id
+          ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' }
+          : i,
+      ))
+    }
+    return processNext()
+  }
+
+  await Promise.all(Array.from({ length: Math.min(3, items.length) }, () => processNext()))
+}
 
 export function ScanPanel() {
   const { closePanel } = usePanel()
@@ -32,11 +66,7 @@ export function ScanPanel() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [queueItems, setQueueItems] = useState<QueueItem[]>([])
-
-  // Continuous drain refs
-  const activeRef = useRef(0)
-  const dispatchedRef = useRef(new Set<string>())
-  const uploadVersionRef = useRef(0)
+  const [batchDone, setBatchDone] = useState(false)
 
   // Revoke single preview URL on change
   const prevUrl = useRef<string | null>(null)
@@ -56,23 +86,21 @@ export function ScanPanel() {
   const isInQueue = queueItems.length > 0
   const doneCount = queueItems.filter(i => i.status === 'done').length
   const errorCount = queueItems.filter(i => i.status === 'error').length
-  const uploadingCount = queueItems.filter(i => i.status === 'uploading').length
-  const queuedCount = queueItems.filter(i => i.status === 'queued').length
-  const isBatchUploading = uploadingCount > 0
+  const isBatchUploading = queueItems.some(i => i.status === 'uploading')
   const allProcessed = isInQueue && queueItems.every(i => i.status === 'done' || i.status === 'error')
-  const allDone = allProcessed && errorCount === 0
 
   // Auto-close + navigate when all succeed
   useEffect(() => {
-    if (!allDone || !isInQueue) return
+    if (!batchDone || !allProcessed || errorCount > 0) return
     const timer = setTimeout(() => {
       queueItems.forEach(item => URL.revokeObjectURL(item.previewUrl))
       setQueueItems([])
+      setBatchDone(false)
       setClosing(true)
       setTimeout(() => { closePanel(); navigate({ to: '/home' }) }, 150)
     }, 1400)
     return () => clearTimeout(timer)
-  }, [allDone, isInQueue]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [batchDone, allProcessed, errorCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClose = () => {
     setClosing(true)
@@ -80,66 +108,24 @@ export function ScanPanel() {
   }
 
   const clearQueue = useCallback(() => {
-    uploadVersionRef.current++
-    activeRef.current = 0
-    dispatchedRef.current.clear()
     queueItems.forEach(item => URL.revokeObjectURL(item.previewUrl))
     setQueueItems([])
+    setBatchDone(false)
   }, [queueItems])
-
-  // Upload a single item
-  const uploadItem = useCallback(async (item: QueueItem) => {
-    const version = uploadVersionRef.current
-    activeRef.current++
-    setQueueItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'uploading' } : i))
-    try {
-      const { data: { session } } = await supabaseAuth.auth.getSession()
-      if (!session) throw new Error('Not authenticated')
-      const fd = new FormData()
-      fd.append('receipt', item.file, item.file.name)
-      const res = await fetch(UPLOAD_URL(), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: fd,
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
-      setQueueItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'done' } : i))
-    } catch (err) {
-      setQueueItems(prev => prev.map(i =>
-        i.id === item.id
-          ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' }
-          : i,
-      ))
-    } finally {
-      if (uploadVersionRef.current === version) activeRef.current--
-    }
-  }, [])
-
-  // Auto-drain: whenever queue changes, fill available concurrency slots
-  useEffect(() => {
-    const newItems = queueItems.filter(i => i.status === 'queued' && !dispatchedRef.current.has(i.id))
-    const available = CONCURRENCY - activeRef.current
-    if (available <= 0 || newItems.length === 0) return
-    newItems.slice(0, available).forEach(item => {
-      dispatchedRef.current.add(item.id)
-      uploadItem(item)
-    })
-  }, [queueItems, uploadItem])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
-    if (files.length === 1 && queueItems.length === 0) {
+    if (files.length === 1) {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0] })
       setStatus('previewing')
     } else {
-      setQueueItems(prev => [...prev, ...files.map(f => ({
+      setQueueItems(files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
         status: 'queued' as const,
-      }))])
+      })))
     }
     e.target.value = ''
   }
@@ -149,16 +135,16 @@ export function ScanPanel() {
     setDragging(false)
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
     if (!files.length) return
-    if (files.length === 1 && queueItems.length === 0) {
+    if (files.length === 1) {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0] })
       setStatus('previewing')
     } else {
-      setQueueItems(prev => [...prev, ...files.map(f => ({
+      setQueueItems(files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
         status: 'queued' as const,
-      }))])
+      })))
     }
   }
 
@@ -176,11 +162,10 @@ export function ScanPanel() {
       if (!session) throw new Error('Not authenticated')
       const formData = new FormData()
       formData.append('receipt', preview.blob, 'scan.jpg')
-      const res = await fetch(UPLOAD_URL(), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: formData,
-      })
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`,
+        { method: 'POST', headers: { Authorization: `Bearer ${session.access_token}` }, body: formData },
+      )
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
       setStatus('success')
@@ -194,15 +179,32 @@ export function ScanPanel() {
     }
   }
 
-  const handleRetryFailed = useCallback(() => {
-    setQueueItems(prev => prev.map(i => {
-      if (i.status === 'error') {
-        dispatchedRef.current.delete(i.id)
-        return { ...i, status: 'queued' as const, error: undefined }
-      }
-      return i
-    }))
-  }, [])
+  const handleBatchUpload = async () => {
+    try {
+      const { data: { session } } = await supabaseAuth.auth.getSession()
+      if (!session) return
+      await runBatchUpload(queueItems, session.access_token, setQueueItems)
+    } finally {
+      setBatchDone(true)
+    }
+  }
+
+  const handleRetryFailed = async () => {
+    const failedItems = queueItems
+      .filter(i => i.status === 'error')
+      .map(i => ({ ...i, status: 'queued' as const, error: undefined }))
+    setQueueItems(prev => prev.map(i =>
+      i.status === 'error' ? { ...i, status: 'queued', error: undefined } : i,
+    ))
+    setBatchDone(false)
+    try {
+      const { data: { session } } = await supabaseAuth.auth.getSession()
+      if (!session) return
+      await runBatchUpload(failedItems, session.access_token, setQueueItems)
+    } finally {
+      setBatchDone(true)
+    }
+  }
 
   return (
     <>
@@ -246,7 +248,7 @@ export function ScanPanel() {
           {isInQueue && (
             <>
               <div className="flex-1 overflow-y-auto min-h-0">
-                {allDone ? (
+                {batchDone && errorCount === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-success/10 flex items-center justify-center">
                       <CheckCircle size={26} className="text-success" />
@@ -276,13 +278,9 @@ export function ScanPanel() {
                             <AlertCircle size={18} className="text-red-400" />
                           </div>
                         )}
-                        {item.status === 'queued' && (
+                        {item.status === 'queued' && !isBatchUploading && (
                           <button
-                            onClick={() => {
-                              dispatchedRef.current.delete(item.id)
-                              URL.revokeObjectURL(item.previewUrl)
-                              setQueueItems(prev => prev.filter(i => i.id !== item.id))
-                            }}
+                            onClick={() => setQueueItems(prev => prev.filter(i => i.id !== item.id))}
                             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center cursor-pointer"
                           >
                             <X size={10} />
@@ -290,7 +288,7 @@ export function ScanPanel() {
                         )}
                       </div>
                     ))}
-                    {!allProcessed && (
+                    {!isBatchUploading && !allProcessed && (
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         className="aspect-square rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center gap-1 text-text-2 hover:border-primary/50 hover:text-primary transition-colors duration-150 cursor-pointer"
@@ -303,17 +301,11 @@ export function ScanPanel() {
                 )}
               </div>
 
-              {!allDone && (
+              {!batchDone && (
                 <>
-                  {/* Status text */}
-                  {isBatchUploading && !allProcessed && (
+                  {isBatchUploading && (
                     <p className="text-xs text-text-2 text-center">
-                      {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
-                    </p>
-                  )}
-                  {queuedCount > 0 && !isBatchUploading && (
-                    <p className="text-xs text-text-2 text-center">
-                      Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
+                      Uploading {doneCount + 1} of {queueItems.length}…
                     </p>
                   )}
                   {allProcessed && errorCount > 0 && (
@@ -321,8 +313,6 @@ export function ScanPanel() {
                       {doneCount} of {queueItems.length} uploaded · {errorCount} failed
                     </p>
                   )}
-
-                  {/* Action buttons */}
                   {allProcessed && errorCount > 0 ? (
                     <div className="flex gap-2">
                       <button
@@ -340,10 +330,14 @@ export function ScanPanel() {
                     </div>
                   ) : (
                     <button
-                      onClick={clearQueue}
-                      className="w-full h-11 flex items-center justify-center gap-2 rounded-xl border border-border text-text-2 text-sm font-medium cursor-pointer hover:bg-surface hover:text-text-1 transition-colors duration-150"
+                      onClick={isBatchUploading ? undefined : handleBatchUpload}
+                      disabled={isBatchUploading || queueItems.length === 0}
+                      className="w-full h-11 flex items-center justify-center gap-2 rounded-xl bg-primary text-white text-sm font-semibold cursor-pointer hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity duration-150"
                     >
-                      Cancel uploads
+                      {isBatchUploading
+                        ? <><Loader2 size={16} className="animate-spin" /> Uploading…</>
+                        : `Upload ${queueItems.length} receipt${queueItems.length !== 1 ? 's' : ''}`
+                      }
                     </button>
                   )}
                 </>

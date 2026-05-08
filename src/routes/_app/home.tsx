@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Receipt, FileText, CheckCircle, TrendingUp, Bell, Trash2, X, Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { fetchExpenses, fetchReports, fetchInbox, deleteExpense, deleteReport } from '#/lib/queries'
@@ -8,12 +8,10 @@ import { queryKeys } from '#/lib/queryKeys'
 import { TopBar } from '#/components/TopBar'
 import { StatusBadge } from '#/components/StatusBadge'
 import { formatCurrency } from '#/lib/format'
-import { supabaseAuth } from '#/lib/supabase'
 import { useAuth } from '#/context/AuthContext'
 import { useWorkspace } from '#/context/WorkspaceContext'
 import { useLongPress } from '#/lib/useLongPress'
 import type { Expense, ExpenseStatus } from '#/lib/types'
-import type { RealtimeChannel } from '@supabase/supabase-js'
 
 export const Route = createFileRoute('/_app/home')({
   component: HomeScreen,
@@ -72,69 +70,6 @@ function HomeScreen() {
     onError: () => toast.error('Failed to delete. Try again.'),
   })
 
-  // ── Scan processing toast ────────────────────────────────────────────────
-  const channelRef = useRef<RealtimeChannel | null>(null)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const SCAN_TOAST = 'scan-processing'
-
-  useEffect(() => {
-    const setup = async () => {
-      const { data: { session } } = await supabaseAuth.auth.getSession()
-      if (!session) return
-      const userId = session.user.id
-
-      const { data: pending } = await supabaseAuth
-        .from('scans')
-        .select('id')
-        .eq('user_id', userId)
-        .in('status', ['uploaded', 'processing'])
-        .gte('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString())
-
-      if (pending?.length) {
-        toast.loading('Scanning receipt with AI…', { id: SCAN_TOAST })
-        timeoutRef.current = setTimeout(() => {
-          toast.error('Scan timed out. Try again from the scan screen.', { id: SCAN_TOAST })
-        }, 45000)
-      }
-
-      channelRef.current = supabaseAuth
-        .channel(`home-scans-${userId}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'scans', filter: `user_id=eq.${userId}` },
-          (payload) => {
-            const scan = payload.new as { status: string }
-            if (scan.status === 'processing' || scan.status === 'uploaded') {
-              clearTimeout(timeoutRef.current!)
-              toast.loading('Scanning receipt with AI…', { id: SCAN_TOAST })
-              timeoutRef.current = setTimeout(() => {
-                toast.error('Scan timed out. Try again from the scan screen.', { id: SCAN_TOAST })
-              }, 45000)
-            } else if (scan.status === 'parsed') {
-              clearTimeout(timeoutRef.current!)
-              toast.success('Receipt scanned successfully', { id: SCAN_TOAST })
-              queryClient.invalidateQueries({ queryKey: queryKeys.expenses() })
-              queryClient.invalidateQueries({ queryKey: queryKeys.mileage() })
-            } else if (scan.status === 'failed') {
-              clearTimeout(timeoutRef.current!)
-              toast.error('Scan failed. Try again from the scan screen.', { id: SCAN_TOAST })
-            } else if (scan.status === 'unknown') {
-              clearTimeout(timeoutRef.current!)
-              toast.error('Not a receipt or map image. Please scan a valid receipt.', { id: SCAN_TOAST })
-            }
-          },
-        )
-        .subscribe()
-    }
-
-    setup()
-
-    return () => {
-      channelRef.current?.unsubscribe()
-      clearTimeout(timeoutRef.current!)
-    }
-  }, [queryClient])
-
   const { totalThisMonth, pendingCount, approvedCount, draftCount } = useMemo(() => {
     const currentMonth = new Date().toISOString().slice(0, 7)
     let totalThisMonth = 0, pendingCount = 0, approvedCount = 0, draftCount = 0
@@ -192,18 +127,21 @@ function HomeScreen() {
             value={String(pendingCount)}
             icon={<Receipt size={16} />}
             colorClass="text-amber-600 bg-amber-50 dark:bg-amber-900/20"
+            onClick={() => navigate({ to: '/expenses', search: { status: 'submitted' } })}
           />
           <StatCard
             label="Approved"
             value={String(approvedCount)}
             icon={<CheckCircle size={16} />}
             colorClass="text-success bg-success-light"
+            onClick={() => navigate({ to: '/expenses', search: { status: 'approved' } })}
           />
           <StatCard
             label="Drafts"
             value={String(draftCount)}
             icon={<FileText size={16} />}
             colorClass="text-text-2 bg-border/50"
+            onClick={() => navigate({ to: '/expenses', search: { status: 'draft' } })}
           />
         </div>
 
@@ -401,14 +339,31 @@ function StatCard({
   value,
   icon,
   colorClass,
+  onClick,
 }: {
   label: string
   value: string
   icon: React.ReactNode
   colorClass: string
+  onClick?: () => void
 }) {
+  const base = 'bg-surface rounded-xl border border-border shadow-sm p-4'
+  if (onClick) {
+    return (
+      <button
+        onClick={onClick}
+        className={`${base} text-left w-full hover:border-primary/40 hover:shadow-md transition-all duration-150 cursor-pointer active:scale-[0.98]`}
+      >
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2.5 ${colorClass}`}>
+          {icon}
+        </div>
+        <p className="text-xl font-bold text-text-1 tabular-nums leading-tight">{value}</p>
+        <p className="text-xs text-text-2 mt-0.5">{label}</p>
+      </button>
+    )
+  }
   return (
-    <div className="bg-surface rounded-xl border border-border shadow-sm p-4">
+    <div className={base}>
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2.5 ${colorClass}`}>
         {icon}
       </div>

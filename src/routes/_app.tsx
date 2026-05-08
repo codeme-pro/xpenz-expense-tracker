@@ -8,6 +8,8 @@ import { AddExpensePanel } from '#/components/AddExpensePanel'
 import { WorkspaceSwitcherSheet } from '#/components/WorkspaceSwitcherSheet'
 import { PanelProvider, usePanel } from '#/context/PanelContext'
 import { WorkspaceProvider, useWorkspace } from '#/context/WorkspaceContext'
+import { ScanProgressProvider } from '#/context/ScanProgressContext'
+import { ScanProgressIndicator } from '#/components/ScanProgressIndicator'
 import { HardLockScreen } from '#/components/HardLockScreen'
 import { TrialBanner } from '#/components/TrialBanner'
 import { useAuth } from '#/context/AuthContext'
@@ -40,7 +42,9 @@ function AppLayoutWrapper() {
   return (
     <WorkspaceProvider>
       <PanelProvider>
-        <AppLayout />
+        <ScanProgressProvider>
+          <AppLayout />
+        </ScanProgressProvider>
       </PanelProvider>
     </WorkspaceProvider>
   )
@@ -74,6 +78,8 @@ function AppLayout() {
           <WorkspaceSwitcherSheet />
         </div>
       )}
+
+      <ScanProgressIndicator />
     </div>
   )
 }

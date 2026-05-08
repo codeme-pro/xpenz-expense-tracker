@@ -23,12 +23,46 @@ type QueueItem = {
 
 interface Preview { url: string; blob: Blob; source: 'camera' | 'file' }
 
-const CONCURRENCY = 3
-const UPLOAD_URL = () => `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`
-
 function getFrameDimensions() {
   const w = window.innerWidth * 0.8
   return { w, h: w * (4 / 3) }
+}
+
+async function runBatchUpload(
+  items: QueueItem[],
+  token: string,
+  setQueue: React.Dispatch<React.SetStateAction<QueueItem[]>>,
+) {
+  const baseUrl = `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`
+  let nextIdx = 0
+
+  async function processNext(): Promise<void> {
+    const idx = nextIdx++
+    if (idx >= items.length) return
+    const item = items[idx]
+    setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'uploading' } : i))
+    try {
+      const fd = new FormData()
+      fd.append('receipt', item.file, item.file.name)
+      const res = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
+      setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'done' } : i))
+    } catch (err) {
+      setQueue(prev => prev.map(i =>
+        i.id === item.id
+          ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' }
+          : i,
+      ))
+    }
+    return processNext()
+  }
+
+  await Promise.all(Array.from({ length: Math.min(3, items.length) }, () => processNext()))
 }
 
 function ScanScreen() {
@@ -42,11 +76,7 @@ function ScanScreen() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [queueItems, setQueueItems] = useState<QueueItem[]>([])
-
-  // Continuous drain refs
-  const activeRef = useRef(0)
-  const dispatchedRef = useRef(new Set<string>())
-  const uploadVersionRef = useRef(0)
+  const [batchDone, setBatchDone] = useState(false)
 
   useEffect(() => {
     const check = () => setIsDesktop(window.innerWidth >= 1024)
@@ -61,6 +91,7 @@ function ScanScreen() {
     return () => { if (old) URL.revokeObjectURL(old) }
   }, [preview?.url])
 
+  // Revoke queue preview URLs on unmount
   const queueRef = useRef(queueItems)
   queueRef.current = queueItems
   useEffect(() => {
@@ -70,11 +101,8 @@ function ScanScreen() {
   const isInQueue = queueItems.length > 0
   const doneCount = queueItems.filter(i => i.status === 'done').length
   const errorCount = queueItems.filter(i => i.status === 'error').length
-  const uploadingCount = queueItems.filter(i => i.status === 'uploading').length
-  const queuedCount = queueItems.filter(i => i.status === 'queued').length
-  const isBatchUploading = uploadingCount > 0
+  const isBatchUploading = queueItems.some(i => i.status === 'uploading')
   const allProcessed = isInQueue && queueItems.every(i => i.status === 'done' || i.status === 'error')
-  const allDone = allProcessed && errorCount === 0
 
   const closeAndNavigate = useCallback(async (to = '/home') => {
     setExiting(true)
@@ -84,60 +112,18 @@ function ScanScreen() {
 
   // Auto-navigate when all succeed
   useEffect(() => {
-    if (!allDone || !isInQueue) return
+    if (!batchDone || !allProcessed || errorCount > 0) return
     const timer = setTimeout(() => closeAndNavigate('/home'), 1400)
     return () => clearTimeout(timer)
-  }, [allDone, isInQueue, closeAndNavigate])
-
-  // Upload a single item
-  const uploadItem = useCallback(async (item: QueueItem) => {
-    const version = uploadVersionRef.current
-    activeRef.current++
-    setQueueItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'uploading' } : i))
-    try {
-      const { data: { session } } = await supabaseAuth.auth.getSession()
-      if (!session) throw new Error('Not authenticated')
-      const fd = new FormData()
-      fd.append('receipt', item.file, item.file.name)
-      const res = await fetch(UPLOAD_URL(), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: fd,
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
-      setQueueItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'done' } : i))
-    } catch (err) {
-      setQueueItems(prev => prev.map(i =>
-        i.id === item.id
-          ? { ...i, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' }
-          : i,
-      ))
-    } finally {
-      if (uploadVersionRef.current === version) activeRef.current--
-    }
-  }, [])
-
-  // Auto-drain: whenever queue changes, fill available concurrency slots
-  useEffect(() => {
-    const newItems = queueItems.filter(i => i.status === 'queued' && !dispatchedRef.current.has(i.id))
-    const available = CONCURRENCY - activeRef.current
-    if (available <= 0 || newItems.length === 0) return
-    newItems.slice(0, available).forEach(item => {
-      dispatchedRef.current.add(item.id)
-      uploadItem(item)
-    })
-  }, [queueItems, uploadItem])
+  }, [batchDone, allProcessed, errorCount, closeAndNavigate])
 
   const clearQueue = useCallback(() => {
-    uploadVersionRef.current++
-    activeRef.current = 0
-    dispatchedRef.current.clear()
     queueItems.forEach(item => URL.revokeObjectURL(item.previewUrl))
     setQueueItems([])
+    setBatchDone(false)
   }, [queueItems])
 
-  // Camera: preview if idle, add to queue directly if already in queue mode
+  // Camera: single shot → preview, but if already in queue mode → add to queue directly
   const handleCameraChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -155,20 +141,20 @@ function ScanScreen() {
     e.target.value = ''
   }
 
-  // Gallery: single + not in queue → preview; otherwise add to queue
+  // Gallery: single → preview flow, multiple → queue flow
   const handleGalleryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
-    if (files.length === 1 && queueItems.length === 0) {
+    if (files.length === 1) {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0], source: 'file' })
       setStatus('previewing')
     } else {
-      setQueueItems(prev => [...prev, ...files.map(f => ({
+      setQueueItems(files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
         status: 'queued' as const,
-      }))])
+      })))
     }
     e.target.value = ''
   }
@@ -191,11 +177,10 @@ function ScanScreen() {
       if (!session) throw new Error('Not authenticated')
       const formData = new FormData()
       formData.append('receipt', preview.blob, 'scan.jpg')
-      const res = await fetch(UPLOAD_URL(), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: formData,
-      })
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL as string}/functions/v1/upload-receipt`,
+        { method: 'POST', headers: { Authorization: `Bearer ${session.access_token}` }, body: formData },
+      )
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error ?? 'Upload failed')
       setStatus('success')
@@ -206,15 +191,32 @@ function ScanScreen() {
     }
   }, [preview, closeAndNavigate])
 
-  const handleRetryFailed = useCallback(() => {
-    setQueueItems(prev => prev.map(i => {
-      if (i.status === 'error') {
-        dispatchedRef.current.delete(i.id)
-        return { ...i, status: 'queued' as const, error: undefined }
-      }
-      return i
-    }))
-  }, [])
+  const handleBatchUpload = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabaseAuth.auth.getSession()
+      if (!session) return
+      await runBatchUpload(queueItems, session.access_token, setQueueItems)
+    } finally {
+      setBatchDone(true)
+    }
+  }, [queueItems])
+
+  const handleRetryFailed = useCallback(async () => {
+    const failedItems = queueItems
+      .filter(i => i.status === 'error')
+      .map(i => ({ ...i, status: 'queued' as const, error: undefined }))
+    setQueueItems(prev => prev.map(i =>
+      i.status === 'error' ? { ...i, status: 'queued', error: undefined } : i,
+    ))
+    setBatchDone(false)
+    try {
+      const { data: { session } } = await supabaseAuth.auth.getSession()
+      if (!session) return
+      await runBatchUpload(failedItems, session.access_token, setQueueItems)
+    } finally {
+      setBatchDone(true)
+    }
+  }, [queueItems])
 
   // ── Desktop: not available ────────────────────────────────────────────────
   if (isDesktop) {
@@ -281,19 +283,22 @@ function ScanScreen() {
             <span className="text-white text-sm font-medium">
               {queueItems.length} receipt{queueItems.length !== 1 ? 's' : ''}
             </span>
-            <button
-              onClick={() => galleryInputRef.current?.click()}
-              aria-label="Add more from gallery"
-              disabled={allDone}
-              className="w-10 h-10 flex items-center justify-center rounded-full bg-white/10 text-white touch-manipulation active:scale-90 disabled:opacity-40 transition-transform duration-100"
-            >
-              <Upload size={18} />
-            </button>
+            {!isBatchUploading && !batchDone ? (
+              <button
+                onClick={() => galleryInputRef.current?.click()}
+                aria-label="Add more"
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/10 text-white touch-manipulation active:scale-90 transition-transform duration-100"
+              >
+                <Upload size={18} />
+              </button>
+            ) : (
+              <div className="w-10 h-10" />
+            )}
           </div>
 
           {/* Thumbnail grid */}
           <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-            {allDone ? (
+            {batchDone && errorCount === 0 ? (
               <div className="h-full flex flex-col items-center justify-center gap-5">
                 <div className="w-16 h-16 rounded-2xl bg-green-500/20 flex items-center justify-center">
                   <CheckCircle size={28} className="text-green-400" />
@@ -324,14 +329,9 @@ function ScanScreen() {
                         <p className="text-[10px] text-red-300 text-center line-clamp-2">{item.error}</p>
                       </div>
                     )}
-                    {/* Remove button only for items not yet dispatched */}
-                    {item.status === 'queued' && (
+                    {item.status === 'queued' && !isBatchUploading && (
                       <button
-                        onClick={() => {
-                          dispatchedRef.current.delete(item.id)
-                          URL.revokeObjectURL(item.previewUrl)
-                          setQueueItems(prev => prev.filter(i => i.id !== item.id))
-                        }}
+                        onClick={() => setQueueItems(prev => prev.filter(i => i.id !== item.id))}
                         className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center touch-manipulation active:scale-90"
                       >
                         <X size={14} />
@@ -348,48 +348,52 @@ function ScanScreen() {
             className="shrink-0 px-5 pt-3 bg-black space-y-3"
             style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
           >
-            {!allDone && (
+            {isBatchUploading && (
+              <p className="text-xs text-white/50 text-center">
+                Uploading {doneCount + 1} of {queueItems.length}…
+              </p>
+            )}
+            {batchDone && errorCount > 0 && (
+              <p className="text-xs text-white/50 text-center">
+                {doneCount} of {queueItems.length} uploaded · {errorCount} failed
+              </p>
+            )}
+            {!batchDone && (
               allProcessed && errorCount > 0 ? (
-                <>
-                  <p className="text-xs text-white/50 text-center">
-                    {doneCount} of {queueItems.length} uploaded · {errorCount} failed
-                  </p>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={clearQueue}
-                      className="flex-1 h-12 flex items-center justify-center rounded-2xl border border-white/20 text-white text-sm font-semibold touch-manipulation active:bg-white/10 transition-colors duration-100"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleRetryFailed}
-                      className="flex-1 h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
-                    >
-                      Retry ({errorCount})
-                    </button>
-                  </div>
-                </>
+                <div className="flex gap-3">
+                  <button
+                    onClick={clearQueue}
+                    className="flex-1 h-12 flex items-center justify-center rounded-2xl border border-white/20 text-white text-sm font-semibold touch-manipulation active:bg-white/10 transition-colors duration-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRetryFailed}
+                    className="flex-1 h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
+                  >
+                    Retry ({errorCount})
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => cameraInputRef.current?.click()}
-                    disabled={allDone}
+                    disabled={isBatchUploading}
                     aria-label="Add via camera"
                     className="w-12 h-12 shrink-0 flex items-center justify-center rounded-2xl border border-white/20 text-white touch-manipulation active:bg-white/10 disabled:opacity-40 transition-colors duration-100"
                   >
                     <Camera size={20} />
                   </button>
-                  <div className="flex-1 text-center">
-                    {isBatchUploading ? (
-                      <p className="text-xs text-white/50">
-                        {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
-                      </p>
-                    ) : queuedCount > 0 ? (
-                      <p className="text-xs text-white/50">
-                        Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
-                      </p>
-                    ) : null}
-                  </div>
+                  <button
+                    onClick={isBatchUploading ? undefined : handleBatchUpload}
+                    disabled={isBatchUploading || queueItems.length === 0}
+                    className="flex-1 h-12 flex items-center justify-center gap-2 rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 disabled:opacity-50 transition-opacity duration-100"
+                  >
+                    {isBatchUploading
+                      ? <><Loader2 size={18} className="animate-spin" /> Uploading…</>
+                      : `Upload all (${queueItems.length})`
+                    }
+                  </button>
                 </div>
               )
             )}
@@ -455,6 +459,7 @@ function ScanScreen() {
               Position receipt within frame
             </p>
             <div className="flex items-center justify-between w-full px-10">
+              {/* Gallery — supports multiple selection */}
               <button
                 onClick={() => galleryInputRef.current?.click()}
                 aria-label="Upload from gallery"
@@ -463,6 +468,7 @@ function ScanScreen() {
                 <Upload size={20} />
               </button>
 
+              {/* Camera shutter — single shot */}
               <button
                 onClick={() => cameraInputRef.current?.click()}
                 aria-label="Open camera"
@@ -543,7 +549,7 @@ function ScanScreen() {
         </div>
       )}
 
-      {/* ── STATUS overlays (single-file flow) ── */}
+      {/* ── STATUS overlays ── */}
       {!isInQueue && (status === 'uploading' || status === 'success' || status === 'error') && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-8 animate-status-fade">
           {status === 'uploading' && (
@@ -557,6 +563,7 @@ function ScanScreen() {
               </div>
             </>
           )}
+
           {status === 'success' && (
             <>
               <div className="w-16 h-16 rounded-2xl bg-green-500/20 flex items-center justify-center">
@@ -568,6 +575,7 @@ function ScanScreen() {
               </div>
             </>
           )}
+
           {status === 'error' && (
             <>
               <div className="w-16 h-16 rounded-2xl bg-red-500/20 flex items-center justify-center">
