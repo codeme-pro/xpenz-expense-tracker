@@ -360,6 +360,31 @@ Determine currency using this priority order. Always output both "currency" and 
 
 ---
 
+--- LINE ITEM EXTRACTION RULES (EXPENSE ONLY) ---
+
+Thermal and dot-matrix receipts often wrap long item names across multiple lines.
+A line is a CONTINUATION of the previous item (not a new item) when ALL of these are true:
+- It has no quantity prefix (e.g. no "1 x", "2 x", "1X", "2X", or standalone digit at start)
+- It has no price on the same line
+- It immediately follows a line that already has a quantity and price
+- It is not a subtotal, tax, discount, rounding, or total line
+
+When you detect a continuation line:
+→ Concatenate its text to the previous item's name (with a space)
+→ Do NOT create a new item entry for the continuation line
+→ Do NOT assign the previous price to the continuation line as a separate item
+
+Examples of wrapped items:
+  "1 x SHANIA'S SIGNATURE FRIE    RM17.90"  ← item with price
+  "D RICE"                                   ← continuation → full name = "SHANIA'S SIGNATURE FRIED RICE"
+
+  "1 x NASI LEMAK WITH FRIED      RM7.50"   ← item with price
+  "EGG"                                      ← continuation → full name = "NASI LEMAK WITH FRIED EGG"
+
+Never create a separate item entry for modifier/note lines (e.g. "LESS SUGAR", "SUAM", "KAW", "LESS ICE") that follow a beverage item and have no price and no quantity. Attach them to the previous item's name if they describe it, or ignore them entirely.
+
+---
+
 --- CALCULATION RULES (EXPENSE ONLY) ---
 
 - Do NOT modify extracted totals from the receipt
@@ -384,14 +409,15 @@ Determine currency using this priority order. Always output both "currency" and 
 - Do NOT guess missing numbers
 
 - For tax_breakdown:
-  - If the receipt shows multiple distinct tax lines (e.g. SST 6%, Service Tax 10%):
+  - If the receipt shows multiple distinct tax/charge lines (e.g. SST 6%, Service Tax 10%, Service Charge 10%):
     → extract each as { "label": "<label as printed>", "amount": <number> }
     → list all in tax_breakdown array
     → set tax = sum of all tax_breakdown amounts (rounded to 2 decimal places)
-  - If only one tax type or tax is a single undifferentiated line:
+  - "Service Charge" is a merchant levy (common in Malaysian F&B) — treat it as a tax_breakdown entry if present alongside other tax lines
+  - If only one tax/charge type appears as a single undifferentiated line:
     → set tax_breakdown = null
     → set tax = the single tax value
-  - If no tax:
+  - If no tax or charge:
     → set tax = null, tax_breakdown = null
 
 ---
@@ -523,11 +549,14 @@ Deno.serve(async (req: Request) => {
 
   const token = authHeader.replace("Bearer ", "").trim();
   // Validate by decoding JWT role claim — avoids env var comparison fragility
+  // Supabase JWTs use base64url (no padding, - and _ chars); atob() needs standard base64
   let jwtRole: string | null = null;
   try {
     const parts = token.split(".");
     if (parts.length === 3) {
-      const payload = JSON.parse(atob(parts[1]));
+      const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, "=");
+      const payload = JSON.parse(atob(padded));
       jwtRole = payload.role ?? null;
     }
   } catch { /* invalid JWT format */ }
