@@ -6,16 +6,22 @@ import { queryKeys } from '#/lib/queryKeys'
 import { useAuth } from '#/context/AuthContext'
 
 export type ScanStatus = 'uploaded' | 'processing' | 'parsed' | 'failed' | 'unknown'
+export type ScanType = 'expense' | 'mileage' | 'unknown' | null
 
 export interface ScanItem {
   id: string
   status: ScanStatus
+  type: ScanType
   created_at: string
   file_path: string | null
   error_reason: string | null
   merchant: string | null
   amount: number | null
   currency: string | null
+  fromLocation: string | null
+  toLocation: string | null
+  distance: number | null
+  distanceUnit: string | null
 }
 
 interface ScanProgressContextValue {
@@ -47,7 +53,7 @@ export function ScanProgressProvider({ children }: { children: React.ReactNode }
     const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString()
     const { data } = await supabaseAuth
       .from('scans')
-      .select('id, status, created_at, file_path, error_reason, expenses(merchant, amount, currency)')
+      .select('id, status, type, created_at, file_path, error_reason, expenses(merchant, amount, currency), mileage(from_location, to_location, distance, unit)')
       .eq('user_id', userId)
       .gte('created_at', thirtyMinAgo)
       .order('created_at', { ascending: false })
@@ -55,15 +61,21 @@ export function ScanProgressProvider({ children }: { children: React.ReactNode }
     if (!data) return
     setScans(data.map(row => {
       const exp = Array.isArray(row.expenses) ? row.expenses[0] : null
+      const mil = Array.isArray(row.mileage) ? row.mileage[0] : null
       return {
         id: row.id,
         status: row.status as ScanStatus,
+        type: (row.type as ScanType) ?? null,
         created_at: row.created_at,
         file_path: row.file_path ?? null,
         error_reason: row.error_reason ?? null,
         merchant: exp?.merchant ?? null,
         amount: exp?.amount ?? null,
         currency: exp?.currency ?? null,
+        fromLocation: mil?.from_location ?? null,
+        toLocation: mil?.to_location ?? null,
+        distance: mil?.distance ?? null,
+        distanceUnit: mil?.unit ?? null,
       }
     }))
   }, [])
@@ -84,12 +96,17 @@ export function ScanProgressProvider({ children }: { children: React.ReactNode }
           setScans(prev => [{
             id: row.id as string,
             status: row.status as ScanStatus,
+            type: null,
             created_at: row.created_at as string,
             file_path: (row.file_path as string) ?? null,
             error_reason: null,
             merchant: null,
             amount: null,
             currency: null,
+            fromLocation: null,
+            toLocation: null,
+            distance: null,
+            distanceUnit: null,
           }, ...prev])
         },
       )
@@ -99,30 +116,51 @@ export function ScanProgressProvider({ children }: { children: React.ReactNode }
         async (payload) => {
           const row = payload.new as Record<string, unknown>
           const status = row.status as ScanStatus
+          const type = (row.type as ScanType) ?? null
           let merchant: string | null = null
           let amount: number | null = null
           let currency: string | null = null
+          let fromLocation: string | null = null
+          let toLocation: string | null = null
+          let distance: number | null = null
+          let distanceUnit: string | null = null
 
           if (status === 'parsed') {
-            const { data: expData } = await supabaseAuth
-              .from('expenses')
-              .select('merchant, amount, currency')
-              .eq('scan_id', row.id as string)
-              .single()
-            if (expData) {
-              merchant = expData.merchant
-              amount = expData.amount
-              currency = expData.currency
+            if (type === 'expense') {
+              const { data: expData } = await supabaseAuth
+                .from('expenses')
+                .select('merchant, amount, currency')
+                .eq('scan_id', row.id as string)
+                .single()
+              if (expData) {
+                merchant = expData.merchant
+                amount = expData.amount
+                currency = expData.currency
+              }
+              queryClient.invalidateQueries({ queryKey: queryKeys.expenses() })
+            } else if (type === 'mileage') {
+              const { data: milData } = await supabaseAuth
+                .from('mileage')
+                .select('from_location, to_location, distance, unit')
+                .eq('scan_id', row.id as string)
+                .single()
+              if (milData) {
+                fromLocation = milData.from_location
+                toLocation = milData.to_location
+                distance = milData.distance
+                distanceUnit = milData.unit
+              }
+              queryClient.invalidateQueries({ queryKey: queryKeys.mileage() })
             }
-            queryClient.invalidateQueries({ queryKey: queryKeys.expenses() })
-            queryClient.invalidateQueries({ queryKey: queryKeys.mileage() })
           }
 
           setScans(prev => prev.map(s => s.id === (row.id as string) ? {
             ...s,
             status,
+            type,
             error_reason: (row.error_reason as string) ?? null,
             ...(merchant !== null ? { merchant, amount, currency } : {}),
+            ...(distance !== null ? { fromLocation, toLocation, distance, distanceUnit } : {}),
           } : s))
         },
       )

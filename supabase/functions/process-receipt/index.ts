@@ -631,7 +631,7 @@ Deno.serve(async (req: Request) => {
     if (parsed.type === "unknown") {
       await supabaseAdmin
         .from("scans")
-        .update({ status: "unknown" })
+        .update({ status: "unknown", type: "unknown" })
         .eq("id", scan_id);
 
       return json({ success: true, type: "unknown" });
@@ -749,7 +749,7 @@ Deno.serve(async (req: Request) => {
       // ─── 10. Update scan → parsed ────────────────────────────────────────
       await supabaseAdmin
         .from("scans")
-        .update({ status: "parsed" })
+        .update({ status: "parsed", type: "expense" })
         .eq("id", scan_id);
 
       await supabaseAdmin.rpc("increment_scans_used", { user_id: scan.user_id });
@@ -809,7 +809,7 @@ Deno.serve(async (req: Request) => {
 
       await supabaseAdmin
         .from("scans")
-        .update({ status: "parsed" })
+        .update({ status: "parsed", type: "mileage" })
         .eq("id", scan_id);
 
       await supabaseAdmin.rpc("increment_scans_used", { user_id: scan.user_id });

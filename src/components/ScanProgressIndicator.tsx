@@ -23,21 +23,25 @@ function ScanRow({ scan }: { scan: ScanItem }) {
   const isActive = scan.status === 'uploaded' || scan.status === 'processing'
   const isFailed = scan.status === 'failed' || scan.status === 'unknown'
 
-  const label = scan.merchant
-    ? scan.merchant
-    : isActive
-      ? 'Scanning with AI…'
-      : scan.status === 'parsed'
-        ? 'Receipt scanned'
-        : scan.status === 'unknown'
-          ? 'Not a valid receipt'
-          : 'Scan failed'
+  const label = isActive
+    ? 'Scanning with AI…'
+    : scan.status === 'parsed'
+      ? scan.type === 'mileage'
+        ? (scan.fromLocation && scan.toLocation
+            ? `${scan.fromLocation} → ${scan.toLocation}`
+            : 'Mileage logged')
+        : (scan.merchant ?? 'Receipt scanned')
+      : scan.status === 'unknown'
+        ? 'Not a valid receipt'
+        : 'Scan failed'
 
   const sub = isFailed && scan.error_reason
     ? scan.error_reason
-    : scan.amount && scan.currency
-      ? formatCurrency(scan.amount, scan.currency)
-      : formatRelative(scan.created_at)
+    : scan.type === 'mileage' && scan.distance !== null
+      ? `${scan.distance} ${scan.distanceUnit ?? 'km'}`
+      : scan.amount && scan.currency
+        ? formatCurrency(scan.amount, scan.currency)
+        : formatRelative(scan.created_at)
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
