@@ -544,23 +544,8 @@ Deno.serve(async (req: Request) => {
   }
 
   // ─── Auth — service role only ────────────────────────────────────────────
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader) return json({ error: "Unauthorized" }, 401);
-
-  const token = authHeader.replace("Bearer ", "").trim();
-  // Validate by decoding JWT role claim — avoids env var comparison fragility
-  // Supabase JWTs use base64url (no padding, - and _ chars); atob() needs standard base64
-  let jwtRole: string | null = null;
-  try {
-    const parts = token.split(".");
-    if (parts.length === 3) {
-      const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      const padded = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, "=");
-      const payload = JSON.parse(atob(padded));
-      jwtRole = payload.role ?? null;
-    }
-  } catch { /* invalid JWT format */ }
-  if (jwtRole !== "service_role") {
+  const apiKey = req.headers.get("apikey");
+  if (apiKey !== Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
     return json({ error: "Unauthorized" }, 401);
   }
 
