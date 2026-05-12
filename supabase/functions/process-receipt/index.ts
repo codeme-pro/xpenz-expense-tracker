@@ -100,10 +100,9 @@ async function ocrAndParse(
 
   const ocrResponse = await client.ocr.process({
     model: "mistral-ocr-latest",
-    document: {
-      type: "image_url",
-      imageUrl: `data:${mimeType};base64,${imageBase64}`,
-    },
+    document: mimeType === "application/pdf"
+      ? { type: "document_url", documentUrl: `data:application/pdf;base64,${imageBase64}` }
+      : { type: "image_url", imageUrl: `data:${mimeType};base64,${imageBase64}` },
     includeImageBase64: false,
     documentAnnotationFormat: {
       type: "json_schema",
@@ -437,26 +436,26 @@ Never create a separate item entry for modifier/note lines (e.g. "LESS SUGAR", "
 
 --- AUTHENTICITY ANALYSIS (EXPENSE ONLY) ---
 
-You are viewing the actual receipt image. Use your visual judgment as a vision model
-to assess whether this is a genuine physical receipt from a real transaction.
+You are reviewing a document submitted as proof of a business transaction.
+Assess whether it represents a genuine transaction or shows signs of fabrication.
 
 Score ai_generated_probability from 0 to 100:
-- Does it look like a real printed or handwritten receipt (thermal, dot matrix, stamp, pen)?
-- Does the layout, font, and formatting look naturally produced rather than digitally composed?
-- Is the receipt number present and plausible?
-- Are there visible signs of digital fabrication or image manipulation?
+- For receipt images: does it look like a real printed or handwritten receipt (thermal, dot matrix, stamp, pen)? Are there visible signs of digital manipulation or image editing?
+- For digital documents (e-invoices, PDFs): does the layout, numbering, and branding match what a legitimate business would produce?
+- Is the receipt or invoice number present and plausible?
+- Do merchant details, amounts, and dates appear internally consistent and realistic?
 
 verdict must be one of: "likely_authentic", "suspicious", "likely_ai_generated"
 - 0–30  → "likely_authentic"
 - 31–60 → "suspicious"
 - 61–100 → "likely_ai_generated"
 
-Only add flags when you have clear visual evidence. Use only these exact values:
-- "ai_generated_text"         — text looks digitally composed, not from real printer or handwriting
-- "inconsistent_formatting"   — layout shows signs of editing or fabrication
+Only add flags when you have clear evidence. Use only these exact values:
+- "ai_generated_text"         — text looks digitally composed or fabricated, inconsistent with a real transaction
+- "inconsistent_formatting"   — layout shows signs of editing or does not match a legitimate business document
 - "unrealistic_prices"        — amounts appear clearly fabricated
 - "edited_metadata"           — visible signs of image manipulation or overlaid content
-- "blurry_image"              — image quality too low to verify authenticity
+- "blurry_image"              — image quality too low to verify authenticity (applies to image scans only)
 - "missing_merchant"          — no merchant name visible anywhere
 
 Do not flag based on missing optional fields (address, phone, tax ID) —

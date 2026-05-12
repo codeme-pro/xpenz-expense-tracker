@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Upload, ScanLine, X, Loader2, CheckCircle, AlertCircle, RotateCcw } from 'lucide-react'
+import { Upload, ScanLine, X, Loader2, CheckCircle, AlertCircle, RotateCcw, FileText } from 'lucide-react'
 import { usePanel } from '#/context/PanelContext'
 import { supabaseAuth } from '#/lib/supabase'
 
@@ -10,7 +10,7 @@ type QueueItem = {
   id: string
   file: File
   previewUrl: string
-  status: 'queued' | 'uploading' | 'done' | 'error'
+  status: 'staged' | 'queued' | 'uploading' | 'done' | 'error'
   error?: string
 }
 
@@ -58,21 +58,15 @@ export function ScanPanel() {
   const errorCount = queueItems.filter(i => i.status === 'error').length
   const uploadingCount = queueItems.filter(i => i.status === 'uploading').length
   const queuedCount = queueItems.filter(i => i.status === 'queued').length
+  const stagedCount = queueItems.filter(i => i.status === 'staged').length
   const isBatchUploading = uploadingCount > 0
   const allProcessed = isInQueue && queueItems.every(i => i.status === 'done' || i.status === 'error')
   const allDone = allProcessed && errorCount === 0
+  const hasUploadStarted = queueItems.some(i => i.status !== 'staged')
 
-  // Auto-close + navigate when all succeed
-  useEffect(() => {
-    if (!allDone || !isInQueue) return
-    const timer = setTimeout(() => {
-      queueItems.forEach(item => URL.revokeObjectURL(item.previewUrl))
-      setQueueItems([])
-      setClosing(true)
-      setTimeout(() => { closePanel(); navigate({ to: '/home' }) }, 150)
-    }, 1400)
-    return () => clearTimeout(timer)
-  }, [allDone, isInQueue]) // eslint-disable-line react-hooks/exhaustive-deps
+  const startUpload = useCallback(() => {
+    setQueueItems(prev => prev.map(i => i.status === 'staged' ? { ...i, status: 'queued' as const } : i))
+  }, [])
 
   const handleClose = () => {
     setClosing(true)
@@ -134,11 +128,12 @@ export function ScanPanel() {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0] })
       setStatus('previewing')
     } else {
+      const newStatus = hasUploadStarted ? 'queued' as const : 'staged' as const
       setQueueItems(prev => [...prev, ...files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
-        status: 'queued' as const,
+        status: newStatus,
       }))])
     }
     e.target.value = ''
@@ -147,17 +142,18 @@ export function ScanPanel() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf')
     if (!files.length) return
     if (files.length === 1 && queueItems.length === 0) {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0] })
       setStatus('previewing')
     } else {
+      const newStatus = hasUploadStarted ? 'queued' as const : 'staged' as const
       setQueueItems(prev => [...prev, ...files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
-        status: 'queued' as const,
+        status: newStatus,
       }))])
     }
   }
@@ -221,7 +217,7 @@ export function ScanPanel() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,application/pdf"
           multiple
           className="hidden"
           onChange={handleFileChange}
@@ -260,7 +256,14 @@ export function ScanPanel() {
                   <div className="grid grid-cols-3 gap-2">
                     {queueItems.map(item => (
                       <div key={item.id} className="relative aspect-square rounded-xl overflow-hidden bg-background border border-border">
-                        <img src={item.previewUrl} alt={item.file.name} className="w-full h-full object-cover" />
+                        {item.file.type === 'application/pdf' ? (
+                          <div className="w-full h-full bg-primary/5 flex flex-col items-center justify-center gap-1 p-2">
+                            <FileText size={18} className="text-primary/60 shrink-0" />
+                            <p className="text-[9px] text-text-2 text-center line-clamp-2 break-all leading-tight">{item.file.name}</p>
+                          </div>
+                        ) : (
+                          <img src={item.previewUrl} alt={item.file.name} className="w-full h-full object-cover" />
+                        )}
                         {item.status === 'uploading' && (
                           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                             <Loader2 size={18} className="text-white animate-spin" />
@@ -276,7 +279,7 @@ export function ScanPanel() {
                             <AlertCircle size={18} className="text-red-400" />
                           </div>
                         )}
-                        {item.status === 'queued' && (
+                        {(item.status === 'queued' || item.status === 'staged') && (
                           <button
                             onClick={() => {
                               dispatchedRef.current.delete(item.id)
@@ -303,50 +306,60 @@ export function ScanPanel() {
                 )}
               </div>
 
-              {!allDone && (
-                <>
-                  {/* Status text */}
-                  {isBatchUploading && !allProcessed && (
-                    <p className="text-xs text-text-2 text-center">
-                      {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
-                    </p>
-                  )}
-                  {queuedCount > 0 && !isBatchUploading && (
-                    <p className="text-xs text-text-2 text-center">
-                      Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
-                    </p>
-                  )}
-                  {allProcessed && errorCount > 0 && (
-                    <p className="text-xs text-text-2 text-center">
-                      {doneCount} of {queueItems.length} uploaded · {errorCount} failed
-                    </p>
-                  )}
+              {/* Status text */}
+              {hasUploadStarted && !allDone && isBatchUploading && !allProcessed && (
+                <p className="text-xs text-text-2 text-center">
+                  {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
+                </p>
+              )}
+              {hasUploadStarted && !allDone && queuedCount > 0 && !isBatchUploading && (
+                <p className="text-xs text-text-2 text-center">
+                  Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
+                </p>
+              )}
+              {hasUploadStarted && allProcessed && errorCount > 0 && (
+                <p className="text-xs text-text-2 text-center">
+                  {doneCount} of {queueItems.length} uploaded · {errorCount} failed
+                </p>
+              )}
 
-                  {/* Action buttons */}
-                  {allProcessed && errorCount > 0 ? (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={clearQueue}
-                        className="flex-1 h-11 flex items-center justify-center gap-2 rounded-xl border border-border text-text-1 text-sm font-semibold hover:bg-surface cursor-pointer transition-colors duration-150"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleRetryFailed}
-                        className="flex-1 h-11 flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold cursor-pointer hover:opacity-90 transition-opacity duration-150"
-                      >
-                        Retry ({errorCount})
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={clearQueue}
-                      className="w-full h-11 flex items-center justify-center gap-2 rounded-xl border border-border text-text-2 text-sm font-medium cursor-pointer hover:bg-surface hover:text-text-1 transition-colors duration-150"
-                    >
-                      Cancel uploads
-                    </button>
-                  )}
-                </>
+              {/* Action buttons */}
+              {allDone ? (
+                <button
+                  onClick={handleClose}
+                  className="w-full h-11 flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold cursor-pointer hover:opacity-90 transition-opacity duration-150"
+                >
+                  Done
+                </button>
+              ) : !hasUploadStarted ? (
+                <button
+                  onClick={startUpload}
+                  className="w-full h-11 flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold cursor-pointer hover:opacity-90 transition-opacity duration-150"
+                >
+                  Upload {stagedCount} receipt{stagedCount !== 1 ? 's' : ''}
+                </button>
+              ) : allProcessed && errorCount > 0 ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={clearQueue}
+                    className="flex-1 h-11 flex items-center justify-center gap-2 rounded-xl border border-border text-text-1 text-sm font-semibold hover:bg-surface cursor-pointer transition-colors duration-150"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRetryFailed}
+                    className="flex-1 h-11 flex items-center justify-center rounded-xl bg-primary text-white text-sm font-semibold cursor-pointer hover:opacity-90 transition-opacity duration-150"
+                  >
+                    Retry ({errorCount})
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={clearQueue}
+                  className="w-full h-11 flex items-center justify-center gap-2 rounded-xl border border-border text-text-2 text-sm font-medium cursor-pointer hover:bg-surface hover:text-text-1 transition-colors duration-150"
+                >
+                  Cancel uploads
+                </button>
               )}
             </>
           )}
@@ -357,11 +370,20 @@ export function ScanPanel() {
               {status === 'previewing' && preview && (
                 <>
                   <div className="flex-1 rounded-xl overflow-hidden bg-black/5 border border-border flex items-center justify-center min-h-0">
-                    <img
-                      src={preview.url}
-                      alt="Upload preview"
-                      className="w-full h-full object-contain"
-                    />
+                    {(preview.blob instanceof File && preview.blob.type === 'application/pdf') ? (
+                      <div className="flex flex-col items-center gap-3 p-6">
+                        <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                          <FileText size={32} className="text-primary" />
+                        </div>
+                        <p className="text-sm text-text-2 text-center break-all">{preview.blob.name}</p>
+                      </div>
+                    ) : (
+                      <img
+                        src={preview.url}
+                        alt="Upload preview"
+                        className="w-full h-full object-contain"
+                      />
+                    )}
                   </div>
                   <div className="flex gap-3">
                     <button
@@ -443,8 +465,8 @@ export function ScanPanel() {
                     <Upload size={26} />
                   </div>
                   <div className="text-center space-y-1">
-                    <p className="text-sm font-semibold text-text-1">Upload receipt or screenshot</p>
-                    <p className="text-xs text-text-2">drag and drop · supports multiple files</p>
+                    <p className="text-sm font-semibold text-text-1">Upload receipt, invoice, or screenshot</p>
+                    <p className="text-xs text-text-2">images & PDF · drag and drop · multiple files</p>
                   </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click() }}

@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import {
   Upload, Loader2, CheckCircle, AlertCircle,
-  X, Camera, RotateCcw, MonitorX, Plus,
+  X, Camera, RotateCcw, MonitorX, Plus, FileText,
 } from 'lucide-react'
 import { TopBar } from '#/components/TopBar'
 import { supabaseAuth } from '#/lib/supabase'
@@ -17,7 +17,7 @@ type QueueItem = {
   id: string
   file: File
   previewUrl: string
-  status: 'queued' | 'uploading' | 'done' | 'error'
+  status: 'staged' | 'queued' | 'uploading' | 'done' | 'error'
   error?: string
 }
 
@@ -72,9 +72,11 @@ function ScanScreen() {
   const errorCount = queueItems.filter(i => i.status === 'error').length
   const uploadingCount = queueItems.filter(i => i.status === 'uploading').length
   const queuedCount = queueItems.filter(i => i.status === 'queued').length
+  const stagedCount = queueItems.filter(i => i.status === 'staged').length
   const isBatchUploading = uploadingCount > 0
   const allProcessed = isInQueue && queueItems.every(i => i.status === 'done' || i.status === 'error')
   const allDone = allProcessed && errorCount === 0
+  const hasUploadStarted = queueItems.some(i => i.status !== 'staged')
 
   const closeAndNavigate = useCallback(async (to = '/home') => {
     setExiting(true)
@@ -82,12 +84,9 @@ function ScanScreen() {
     navigate({ to: to as '/home' })
   }, [navigate])
 
-  // Auto-navigate when all succeed
-  useEffect(() => {
-    if (!allDone || !isInQueue) return
-    const timer = setTimeout(() => closeAndNavigate('/home'), 1400)
-    return () => clearTimeout(timer)
-  }, [allDone, isInQueue, closeAndNavigate])
+  const startUpload = useCallback(() => {
+    setQueueItems(prev => prev.map(i => i.status === 'staged' ? { ...i, status: 'queued' as const } : i))
+  }, [])
 
   // Upload a single item
   const uploadItem = useCallback(async (item: QueueItem) => {
@@ -146,7 +145,7 @@ function ScanScreen() {
         id: crypto.randomUUID(),
         file,
         previewUrl: URL.createObjectURL(file),
-        status: 'queued' as const,
+        status: hasUploadStarted ? 'queued' as const : 'staged' as const,
       }])
     } else {
       setPreview({ url: URL.createObjectURL(file), blob: file, source: 'camera' })
@@ -163,11 +162,12 @@ function ScanScreen() {
       setPreview({ url: URL.createObjectURL(files[0]), blob: files[0], source: 'file' })
       setStatus('previewing')
     } else {
+      const newStatus = hasUploadStarted ? 'queued' as const : 'staged' as const
       setQueueItems(prev => [...prev, ...files.map(f => ({
         id: crypto.randomUUID(),
         file: f,
         previewUrl: URL.createObjectURL(f),
-        status: 'queued' as const,
+        status: newStatus,
       }))])
     }
     e.target.value = ''
@@ -257,7 +257,7 @@ function ScanScreen() {
       <input
         ref={galleryInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf"
         multiple
         className="hidden"
         onChange={handleGalleryChange}
@@ -307,7 +307,14 @@ function ScanScreen() {
               <div className="grid grid-cols-2 gap-3">
                 {queueItems.map(item => (
                   <div key={item.id} className="relative aspect-square rounded-2xl overflow-hidden">
-                    <img src={item.previewUrl} alt={item.file.name} className="w-full h-full object-cover" />
+                    {item.file.type === 'application/pdf' ? (
+                      <div className="w-full h-full bg-white/10 flex flex-col items-center justify-center gap-2 p-3">
+                        <FileText size={24} className="text-white/60 shrink-0" />
+                        <p className="text-[10px] text-white/50 text-center line-clamp-2 break-all">{item.file.name}</p>
+                      </div>
+                    ) : (
+                      <img src={item.previewUrl} alt={item.file.name} className="w-full h-full object-cover" />
+                    )}
                     {item.status === 'uploading' && (
                       <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                         <Loader2 size={28} className="text-white animate-spin" />
@@ -325,7 +332,7 @@ function ScanScreen() {
                       </div>
                     )}
                     {/* Remove button only for items not yet dispatched */}
-                    {item.status === 'queued' && (
+                    {(item.status === 'queued' || item.status === 'staged') && (
                       <button
                         onClick={() => {
                           dispatchedRef.current.delete(item.id)
@@ -348,50 +355,70 @@ function ScanScreen() {
             className="shrink-0 px-5 pt-3 bg-black space-y-3"
             style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
           >
-            {!allDone && (
-              allProcessed && errorCount > 0 ? (
-                <>
-                  <p className="text-xs text-white/50 text-center">
-                    {doneCount} of {queueItems.length} uploaded · {errorCount} failed
-                  </p>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={clearQueue}
-                      className="flex-1 h-12 flex items-center justify-center rounded-2xl border border-white/20 text-white text-sm font-semibold touch-manipulation active:bg-white/10 transition-colors duration-100"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleRetryFailed}
-                      className="flex-1 h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
-                    >
-                      Retry ({errorCount})
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center gap-3">
+            {allDone ? (
+              <button
+                onClick={() => closeAndNavigate('/home')}
+                className="w-full h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
+              >
+                Done
+              </button>
+            ) : !hasUploadStarted ? (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  aria-label="Add via camera"
+                  className="w-12 h-12 shrink-0 flex items-center justify-center rounded-2xl border border-white/20 text-white touch-manipulation active:bg-white/10 transition-colors duration-100"
+                >
+                  <Camera size={20} />
+                </button>
+                <button
+                  onClick={startUpload}
+                  className="flex-1 h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
+                >
+                  Upload {stagedCount} receipt{stagedCount !== 1 ? 's' : ''}
+                </button>
+              </div>
+            ) : allProcessed && errorCount > 0 ? (
+              <>
+                <p className="text-xs text-white/50 text-center">
+                  {doneCount} of {queueItems.length} uploaded · {errorCount} failed
+                </p>
+                <div className="flex gap-3">
                   <button
-                    onClick={() => cameraInputRef.current?.click()}
-                    disabled={allDone}
-                    aria-label="Add via camera"
-                    className="w-12 h-12 shrink-0 flex items-center justify-center rounded-2xl border border-white/20 text-white touch-manipulation active:bg-white/10 disabled:opacity-40 transition-colors duration-100"
+                    onClick={clearQueue}
+                    className="flex-1 h-12 flex items-center justify-center rounded-2xl border border-white/20 text-white text-sm font-semibold touch-manipulation active:bg-white/10 transition-colors duration-100"
                   >
-                    <Camera size={20} />
+                    Cancel
                   </button>
-                  <div className="flex-1 text-center">
-                    {isBatchUploading ? (
-                      <p className="text-xs text-white/50">
-                        {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
-                      </p>
-                    ) : queuedCount > 0 ? (
-                      <p className="text-xs text-white/50">
-                        Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
-                      </p>
-                    ) : null}
-                  </div>
+                  <button
+                    onClick={handleRetryFailed}
+                    className="flex-1 h-12 flex items-center justify-center rounded-2xl bg-primary text-white text-sm font-semibold touch-manipulation active:opacity-80 transition-opacity duration-100"
+                  >
+                    Retry ({errorCount})
+                  </button>
                 </div>
-              )
+              </>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  aria-label="Add via camera"
+                  className="w-12 h-12 shrink-0 flex items-center justify-center rounded-2xl border border-white/20 text-white touch-manipulation active:bg-white/10 transition-colors duration-100"
+                >
+                  <Camera size={20} />
+                </button>
+                <div className="flex-1 text-center">
+                  {isBatchUploading ? (
+                    <p className="text-xs text-white/50">
+                      {uploadingCount} uploading · {doneCount} done{queuedCount > 0 ? ` · ${queuedCount} queued` : ''}
+                    </p>
+                  ) : queuedCount > 0 ? (
+                    <p className="text-xs text-white/50">
+                      Preparing {queuedCount} receipt{queuedCount !== 1 ? 's' : ''}…
+                    </p>
+                  ) : null}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -499,7 +526,16 @@ function ScanScreen() {
           </div>
 
           <div className="flex-1 min-h-0 flex items-center justify-center p-5">
-            <img key={preview.url} src={preview.url} alt="Scan preview" className="max-h-full max-w-full object-contain rounded-xl animate-fade-in-up" />
+            {(preview.blob instanceof File && preview.blob.type === 'application/pdf') ? (
+              <div className="flex flex-col items-center gap-4 animate-fade-in-up">
+                <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center">
+                  <FileText size={40} className="text-white/70" />
+                </div>
+                <p className="text-white/60 text-sm text-center break-all px-4">{preview.blob.name}</p>
+              </div>
+            ) : (
+              <img key={preview.url} src={preview.url} alt="Scan preview" className="max-h-full max-w-full object-contain rounded-xl animate-fade-in-up" />
+            )}
           </div>
 
           <div
@@ -528,7 +564,7 @@ function ScanScreen() {
                   id: crypto.randomUUID(),
                   file,
                   previewUrl: preview.url,
-                  status: 'queued' as const,
+                  status: hasUploadStarted ? 'queued' as const : 'staged' as const,
                 }])
                 setPreview(null)
                 setStatus('idle')
