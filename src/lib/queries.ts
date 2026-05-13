@@ -90,6 +90,14 @@ export async function fetchScanSignedUrl(filePath: string): Promise<string | nul
   return data.signedUrl
 }
 
+export async function fetchScanSignedUrlForPrint(filePath: string): Promise<string | null> {
+  const { data, error } = await db.storage.from('scans').createSignedUrl(filePath, 3600, {
+    transform: { width: 120, quality: 60, resize: 'cover' },
+  })
+  if (error) return null
+  return data.signedUrl
+}
+
 export async function fetchExpenses(filters?: PersonalFilters): Promise<Expense[]> {
   let query = db.from('expenses').select(EXPENSE_SELECT).order('created_at', { ascending: false })
   if (filters?.status) query = query.eq('status', filters.status)
@@ -603,6 +611,12 @@ export async function addExpenseToReport(reportId: string, expenseId: string): P
   if (error) throw error
 }
 
+export async function addExpensesToReport(reportId: string, expenseIds: string[]): Promise<void> {
+  if (expenseIds.length === 0) return
+  const { error } = await db.from('expenses').update({ report_id: reportId }).in('id', expenseIds)
+  if (error) throw error
+}
+
 export async function removeExpenseFromReport(expenseId: string): Promise<void> {
   const { error } = await db.from('expenses').update({ report_id: null }).eq('id', expenseId)
   if (error) throw error
@@ -610,6 +624,12 @@ export async function removeExpenseFromReport(expenseId: string): Promise<void> 
 
 export async function addMileageToReport(reportId: string, mileageId: string): Promise<void> {
   const { error } = await db.from('mileage').update({ report_id: reportId }).eq('id', mileageId)
+  if (error) throw error
+}
+
+export async function addMileageEntriesToReport(reportId: string, mileageIds: string[]): Promise<void> {
+  if (mileageIds.length === 0) return
+  const { error } = await db.from('mileage').update({ report_id: reportId }).in('id', mileageIds)
   if (error) throw error
 }
 
