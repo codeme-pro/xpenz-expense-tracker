@@ -279,6 +279,8 @@ function ReportDetail() {
 
   // ── Print view ─────────────────────────────────────────────────────────────
   if (isPrint) {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    const isIOSSafari = isIOS && !(navigator as Navigator & { standalone?: boolean }).standalone
     return (
       <div className="pdf-outer fixed inset-0 z-50 bg-gray-100 font-sans text-[#1E1B4B] flex flex-col">
         <style>{`@media print { @page { size: A4; margin: 15mm; } .pdf-outer { position: static !important; height: auto !important; overflow: visible !important; } .pdf-container { overflow: visible !important; height: auto !important; } .print-paper { transform: none !important; box-shadow: none !important; } }`}</style>
@@ -286,19 +288,26 @@ function ReportDetail() {
           <span className="text-sm text-gray-500 shrink-0">
             {imagesLoading ? 'Loading receipts…' : 'Ready to save'}
           </span>
-          <div className="flex flex-col items-end gap-0.5 shrink-0">
-            <button
-              ref={pdfSaveButtonRef}
-              disabled={imagesLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-[#6366F1] text-white text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#4F46E5] transition-colors"
-            >
-              {imagesLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-              Save as PDF
-            </button>
-            {/iPad|iPhone|iPod/.test(navigator.userAgent) && (
-              <p className="text-[10px] text-gray-400">Tap Share → Save to Files in print sheet</p>
-            )}
-          </div>
+          {isIOSSafari ? (
+            <div className="text-right shrink-0">
+              <p className="text-sm font-medium text-gray-700">Tap <strong>Share ↑</strong> → <strong>Print</strong></p>
+              <p className="text-[11px] text-gray-400 mt-0.5">In print preview, tap Share → Save to Files</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-end gap-0.5 shrink-0">
+              <button
+                ref={pdfSaveButtonRef}
+                disabled={imagesLoading}
+                className="flex items-center gap-2 px-4 py-2 bg-[#6366F1] text-white text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#4F46E5] transition-colors"
+              >
+                {imagesLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                Save as PDF
+              </button>
+              {isIOS && (
+                <p className="text-[10px] text-gray-400">In print sheet, tap Share → Save to Files</p>
+              )}
+            </div>
+          )}
         </div>
         <div
           ref={pdfContainerRef}
