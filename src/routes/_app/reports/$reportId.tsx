@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
 import { useState, useEffect, useRef } from 'react'
-import { AlertTriangle, Plus, Trash2, CheckCircle, XCircle, Loader2, Car, X, Check } from 'lucide-react'
+import { AlertTriangle, Plus, Trash2, CheckCircle, XCircle, Loader2, Car, X, Check, Minimize2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   fetchReport, submitReport, approveReport, rejectReport,
-  addExpenseToReport, addExpensesToReport, removeExpenseFromReport,
-  addMileageToReport, addMileageEntriesToReport, removeMileageFromReport,
+  addExpensesToReport, removeExpenseFromReport,
+  addMileageEntriesToReport, removeMileageFromReport,
   fetchExpenses, fetchMileage, fetchScanSignedUrlForPrint,
 } from '#/lib/queries'
 import { queryKeys } from '#/lib/queryKeys'
@@ -43,6 +43,24 @@ function ReportDetail() {
   const [rejectNote, setRejectNote] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(false)
 
+  const [pdfScale, setPdfScale] = useState(1)
+  const [pdfOffset, setPdfOffset] = useState({ x: 0, y: 0 })
+  const [pdfAnimating, setPdfAnimating] = useState(false)
+  const [fitScale, setFitScale] = useState(1)
+  const pdfContainerRef = useRef<HTMLDivElement>(null)
+  const pdfPaperRef = useRef<HTMLDivElement>(null)
+  const pdfSaveButtonRef = useRef<HTMLButtonElement>(null)
+  const pdfGestureRef = useRef({
+    pointers: new Map<number, { x: number; y: number }>(),
+    dragStart: null as { x: number; y: number; ox: number; oy: number } | null,
+    pinchStart: null as { dist: number; scale: number } | null,
+    hasMoved: false,
+    wasPinching: false,
+    scale: 1,
+    ox: 0,
+    oy: 0,
+  })
+
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.report(reportId),
     queryFn: () => fetchReport(reportId),
@@ -75,6 +93,34 @@ function ReportDetail() {
     imageMap[e.id] = imageResults[i]?.data ?? null
   })
   const imagesLoading = imageResults.some((q) => q.isLoading)
+
+  useEffect(() => {
+    if (!isPrint) return
+    const container = pdfContainerRef.current
+    if (!container) return
+    const computeFit = () => {
+      const scale = container.clientWidth / 794
+      const g = pdfGestureRef.current
+      g.scale = scale
+      g.ox = 0
+      g.oy = 0
+      setFitScale(scale)
+      setPdfScale(scale)
+      setPdfOffset({ x: 0, y: 0 })
+    }
+    computeFit()
+    const ro = new ResizeObserver(computeFit)
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [isPrint, data])
+
+  useEffect(() => {
+    const btn = pdfSaveButtonRef.current
+    if (!btn) return
+    const handler = () => window.print()
+    btn.addEventListener('click', handler)
+    return () => btn.removeEventListener('click', handler)
+  }, [isPrint, data])
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.report(reportId) })
@@ -159,39 +205,120 @@ function ReportDetail() {
   const canSubmit = isDraft && (expenses.length > 0 || mileage.length > 0)
   const itemCount = expenses.length + mileage.length
 
-  // ── Print view ─────────────────────────────────────────────────────────────
-  const outerRef = useRef<HTMLDivElement>(null)
-  const [paperZoom, setPaperZoom] = useState(1)
-  useEffect(() => {
-    if (!isPrint) return
-    const compute = () => {
-      const w = outerRef.current?.offsetWidth ?? window.innerWidth
-      setPaperZoom(Math.min(1, w / 794))
-    }
-    compute()
-    window.addEventListener('resize', compute)
-    return () => window.removeEventListener('resize', compute)
-  }, [isPrint])
+  const clampPdfOffset = (x: number, y: number, scale: number) => {
+    const container = pdfContainerRef.current
+    const paper = pdfPaperRef.current
+    if (!container || !paper) return { x, y }
+    const minX = Math.min(0, container.clientWidth - paper.clientWidth * scale)
+    const minY = Math.min(0, container.clientHeight - paper.clientHeight * scale)
+    return { x: Math.max(minX, Math.min(0, x)), y: Math.max(minY, Math.min(0, y)) }
+  }
 
+  const resetPdfTransform = () => {
+    const g = pdfGestureRef.current
+    g.scale = fitScale; g.ox = 0; g.oy = 0
+    setPdfAnimating(true)
+    setPdfScale(fitScale)
+    setPdfOffset({ x: 0, y: 0 })
+    setTimeout(() => setPdfAnimating(false), 200)
+  }
+
+  const onPdfPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const g = pdfGestureRef.current
+    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (g.pointers.size === 1) {
+      g.wasPinching = false
+      g.hasMoved = false
+      g.pinchStart = null
+      g.dragStart = { x: e.clientX, y: e.clientY, ox: g.ox, oy: g.oy }
+    } else if (g.pointers.size === 2) {
+      g.wasPinching = true
+      g.dragStart = null
+      const pts = Array.from(g.pointers.values())
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+      g.pinchStart = { dist, scale: g.scale }
+    }
+  }
+
+  const onPdfPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = pdfGestureRef.current
+    if (!g.pointers.has(e.pointerId)) return
+    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (g.pinchStart && g.pointers.size === 2) {
+      const pts = Array.from(g.pointers.values())
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+      const newScale = Math.max(fitScale, Math.min(fitScale * 3, g.pinchStart.scale * (dist / g.pinchStart.dist)))
+      const container = pdfContainerRef.current
+      if (container && newScale !== g.scale) {
+        const rect = container.getBoundingClientRect()
+        const midX = (pts[0].x + pts[1].x) / 2 - rect.left
+        const midY = (pts[0].y + pts[1].y) / 2 - rect.top
+        const ratio = newScale / g.scale
+        const clamped = clampPdfOffset(midX * (1 - ratio) + g.ox * ratio, midY * (1 - ratio) + g.oy * ratio, newScale)
+        g.ox = clamped.x; g.oy = clamped.y
+        setPdfOffset(clamped)
+      }
+      g.scale = newScale
+      setPdfScale(newScale)
+    } else if (g.dragStart && g.pointers.size === 1) {
+      const dx = e.clientX - g.dragStart.x
+      const dy = e.clientY - g.dragStart.y
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) g.hasMoved = true
+      const clamped = clampPdfOffset(g.dragStart.ox + dx, g.dragStart.oy + dy, g.scale)
+      g.ox = clamped.x; g.oy = clamped.y
+      setPdfOffset(clamped)
+    }
+  }
+
+  const onPdfPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const g = pdfGestureRef.current
+    g.pointers.delete(e.pointerId)
+    if (g.pointers.size < 2) g.pinchStart = null
+    if (g.pointers.size === 0) g.dragStart = null
+  }
+
+  // ── Print view ─────────────────────────────────────────────────────────────
   if (isPrint) {
     return (
-      <div className="min-h-screen bg-gray-100 font-sans text-[#1E1B4B]">
-        <style>{`@media print { @page { size: A4; margin: 15mm; } .print-paper { zoom: 1 !important; box-shadow: none !important; } }`}</style>
-        <div className="print:hidden sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
-          <span className="text-sm text-gray-500">
+      <div className="pdf-outer fixed inset-0 z-50 bg-gray-100 font-sans text-[#1E1B4B] flex flex-col">
+        <style>{`@media print { @page { size: A4; margin: 15mm; } .pdf-outer { position: static !important; height: auto !important; overflow: visible !important; } .pdf-container { overflow: visible !important; height: auto !important; } .print-paper { transform: none !important; box-shadow: none !important; } }`}</style>
+        <div className="print:hidden flex-shrink-0 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between gap-3">
+          <span className="text-sm text-gray-500 shrink-0">
             {imagesLoading ? 'Loading receipts…' : 'Ready to save'}
           </span>
-          <button
-            onClick={() => window.print()}
-            disabled={imagesLoading}
-            className="flex items-center gap-2 px-4 py-2 bg-[#6366F1] text-white text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#4F46E5] transition-colors"
-          >
-            {imagesLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-            Save as PDF
-          </button>
+          <div className="flex flex-col items-end gap-0.5 shrink-0">
+            <button
+              ref={pdfSaveButtonRef}
+              disabled={imagesLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-[#6366F1] text-white text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#4F46E5] transition-colors"
+            >
+              {imagesLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+              Save as PDF
+            </button>
+            {/iPad|iPhone|iPod/.test(navigator.userAgent) && (
+              <p className="text-[10px] text-gray-400">Tap Share → Save to Files in print sheet</p>
+            )}
+          </div>
         </div>
-        <div ref={outerRef} className="py-6 px-4">
-        <div className="print-paper w-[794px] bg-white shadow-lg p-8" style={{ zoom: paperZoom }}>
+        <div
+          ref={pdfContainerRef}
+          className="pdf-container flex-1 overflow-hidden select-none relative"
+          style={{ touchAction: 'none' }}
+          onPointerDown={onPdfPointerDown}
+          onPointerMove={onPdfPointerMove}
+          onPointerUp={onPdfPointerUp}
+          onPointerCancel={onPdfPointerUp}
+        >
+        <div
+          ref={pdfPaperRef}
+          className="print-paper w-[794px] bg-white shadow-lg p-8"
+          style={{
+            transform: `translate(${pdfOffset.x}px, ${pdfOffset.y}px) scale(${pdfScale})`,
+            transformOrigin: '0 0',
+            transition: pdfAnimating ? 'transform 0.2s ease-out' : undefined,
+          }}
+        >
         {/* Header */}
         <div className="flex items-start justify-between mb-6 pb-4 border-b border-gray-200">
           <div>
@@ -348,6 +475,15 @@ function ReportDetail() {
           </p>
         </div>
         </div>
+          {pdfScale > fitScale * 1.05 && (
+            <button
+              onClick={resetPdfTransform}
+              className="print:hidden absolute bottom-4 right-4 flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-black/60 text-white text-[10px] font-medium backdrop-blur-sm z-10"
+            >
+              <Minimize2 size={10} />
+              Reset zoom
+            </button>
+          )}
         </div>
       </div>
     )
