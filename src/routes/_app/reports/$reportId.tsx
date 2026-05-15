@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient, useQueries } from '@tanstack/react-query'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AlertTriangle, Plus, Trash2, CheckCircle, XCircle, Loader2, Car, X, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -160,9 +160,23 @@ function ReportDetail() {
   const itemCount = expenses.length + mileage.length
 
   // ── Print view ─────────────────────────────────────────────────────────────
+  const outerRef = useRef<HTMLDivElement>(null)
+  const [paperZoom, setPaperZoom] = useState(1)
+  useEffect(() => {
+    if (!isPrint) return
+    const compute = () => {
+      const w = outerRef.current?.offsetWidth ?? window.innerWidth
+      setPaperZoom(Math.min(1, w / 794))
+    }
+    compute()
+    window.addEventListener('resize', compute)
+    return () => window.removeEventListener('resize', compute)
+  }, [isPrint])
+
   if (isPrint) {
     return (
       <div className="min-h-screen bg-gray-100 font-sans text-[#1E1B4B]">
+        <style>{`@media print { @page { size: A4; margin: 15mm; } .print-paper { zoom: 1 !important; box-shadow: none !important; } }`}</style>
         <div className="print:hidden sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
           <span className="text-sm text-gray-500">
             {imagesLoading ? 'Loading receipts…' : 'Ready to save'}
@@ -176,8 +190,8 @@ function ReportDetail() {
             Save as PDF
           </button>
         </div>
-        <div className="print:bg-transparent overflow-x-auto py-6 px-4">
-        <div className="w-[794px] mx-auto bg-white shadow-lg print:shadow-none p-8">
+        <div ref={outerRef} className="py-6 px-4">
+        <div className="print-paper w-[794px] bg-white shadow-lg p-8" style={{ zoom: paperZoom }}>
         {/* Header */}
         <div className="flex items-start justify-between mb-6 pb-4 border-b border-gray-200">
           <div>
