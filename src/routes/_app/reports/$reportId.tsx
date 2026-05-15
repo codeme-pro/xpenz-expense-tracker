@@ -109,9 +109,8 @@ function ReportDetail() {
       setPdfOffset({ x: 0, y: 0 })
     }
     computeFit()
-    const ro = new ResizeObserver(computeFit)
-    ro.observe(container)
-    return () => ro.disconnect()
+    window.addEventListener('resize', computeFit)
+    return () => window.removeEventListener('resize', computeFit)
   }, [isPrint, data])
 
   useEffect(() => {
