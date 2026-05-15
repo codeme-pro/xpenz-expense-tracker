@@ -92,7 +92,7 @@ export async function fetchScanSignedUrl(filePath: string): Promise<string | nul
 
 export async function fetchScanSignedUrlForPrint(filePath: string): Promise<string | null> {
   const { data, error } = await db.storage.from('scans').createSignedUrl(filePath, 3600, {
-    transform: { width: 120, quality: 60, resize: 'cover' },
+    transform: { width: 120, quality: 60, resize: 'contain' },
   })
   if (error) return null
   return data.signedUrl

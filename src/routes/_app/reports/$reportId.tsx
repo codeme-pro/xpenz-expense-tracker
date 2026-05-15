@@ -385,7 +385,7 @@ function ReportDetail() {
                         <img
                           src={imageMap[e.id]!}
                           alt="Receipt"
-                          className="w-10 h-12 object-cover rounded object-top"
+                          className="w-10 h-12 object-contain rounded bg-gray-50"
                         />
                       ) : (
                         <div className="w-10 h-12 rounded bg-gray-100 flex items-center justify-center">
